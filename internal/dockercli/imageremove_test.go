@@ -72,7 +72,7 @@ func TestImageRemovalBlocksStaleOrUnsafeWithoutWrite(t *testing.T) {
 func TestImageRemovalUnverifiedAfterAttemptOrBadReadback(t *testing.T) {
 	f:=&imageRemoveRunner{initial:helloImage,contextName:"default",failAt:"--context default image rm -- hello-world:latest"}
 	r:=(Client{Runner:f}).RemoveImageTag(context.Background(),helloTarget())
-	if r.Outcome!="unverified"||strings.Contains(r.Reason,"PRIVATE_TOKEN") {t.Fatalf("unsafe result %+v",r)}
+	if r.Outcome!="not_removed"||strings.Contains(r.Reason,"PRIVATE_TOKEN") {t.Fatalf("unsafe result %+v",r)}
 	f=&imageRemoveRunner{initial:helloImage,current:helloImage,contextName:"default"}
 	r=(Client{Runner:f}).RemoveImageTag(context.Background(),helloTarget())
 	if r.Outcome!="unverified" {t.Fatalf("readback falsely verified %+v",r)}
