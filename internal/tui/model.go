@@ -35,6 +35,7 @@ type Model struct {
 	client                                                                                                 dockercli.Client
 	pm profileManager
 	clients mcpClientBrowser
+	imageRemoval imageRemovalOverlay
 	mcpSecretsBusy bool
 	perm permissionOverlay
 	catalogAdd catalogAddModel
@@ -259,6 +260,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m=m.clientConnectedResult(v)
 	case configuredClientsMsg:
 		m=m.configuredClientResult(v)
+	case imageRemovalDoneMsg:
+		updated, cmd := m.imageRemovalResult(v)
+		if cmd != nil { return updated, cmd }
+		m = updated
 	case mcpSecretsMsg:
 		if m.mcpSecretsBusy {
 			m.mcpSecretsBusy = false
@@ -486,6 +491,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		key := v.String()
 		if key == "ctrl+c" {
 			return m, tea.Quit
+		}
+		if m.imageRemoval.open {
+			return m.imageRemovalKey(key)
 		}
 		if m.confirmOperation != "" {
 			if key == "y" || key == "Y" {
@@ -747,6 +755,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.message = "Loading logs for " + c.Names
 				return m, loadLogs(m.client, c.ID, c.Names)
 			}
+		case "d":
+			if m.page == 2 && !m.busy && m.selected >= 0 && m.selected < len(m.snapshot.Images) {
+				img := m.snapshot.Images[m.selected]
+				target := dockercli.ImageRemovalTarget{Context: m.snapshot.Context, Repository: img.Repository, Tag: img.Tag, ID: img.ID}
+				if err := dockercli.ValidateImageRemovalTarget(target); err != nil {
+					m.message = "This image cannot be removed safely from Docktop; only tagged, identifiable images are supported."
+					return m, nil
+				}
+				m.imageRemoval = imageRemovalOverlay{open: true, phase: "review", target: target}
+			}
 		case "s":
 			if m.page == 5 && !m.mcpSecretsBusy {
 				m.mcpSecretsBusy = true
@@ -937,6 +955,9 @@ func plainStyledNavigation(value string, w int) string {
 func (m Model) footer(w int) string {
 	// Modal and text-entry shortcuts take precedence over page-level shortcuts.
 	// In particular, p and a are disabled inside MCP metadata inspection.
+	if m.imageRemoval.open {
+		return muted.Render(plain(m.imageRemovalFooter(), w))
+	}
 	if m.confirmOperation != "" {
 		return muted.Render(plain("[y] Confirm  [n/Esc] Cancel", w))
 	}
@@ -975,6 +996,9 @@ func (m Model) footer(w int) string {
 	if m.page == 1 {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
+	if m.page == 2 {
+		help = "[d] Remove image tag (review)  [Enter] Details  [r] Refresh  [?] Help  [q] Quit"
+	}
 	if m.page == 5 {
 		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Profiles  [i] Clients  [s] Secrets  [a] Configured  [q] Quit"
 	}
@@ -1005,6 +1029,7 @@ func (m Model) View() string {
 			"1–8 / Tab  Switch views     ↑↓ / j k / PgUp PgDn  Select and scroll",
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
+			"Images: d  Review removal of one tagged image (no force, context pinned)",
 			"Mutating actions always require explicit y confirmation.",
 			"MCP: / Search; Enter inspect; Shift+A add; i clients; s stored-secret metadata (read-only)",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
@@ -1012,6 +1037,8 @@ func (m Model) View() string {
 			"Esc  Close details / prompts; actions target the current Docker context.",
 			"No MCP servers are started or installed by this application.",
 		}, w, available))
+	case m.imageRemoval.open:
+		b.WriteString(m.imageRemovalView(w, available))
 	case m.confirmOperation != "":
 		lines := []string{red.Render("Container state change requires confirmation"), "", "Operation: " + m.confirmOperation}
 		lines = append(lines, wrap("Container: "+m.confirmName, max(10, w-4), 3)...)
