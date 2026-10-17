@@ -924,7 +924,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; m profile manager/create; p profiles; a configured"
+			"MCP: / Search; Enter inspect; m profile manager/create; p profiles; a configured",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
