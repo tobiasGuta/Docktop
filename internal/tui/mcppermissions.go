@@ -103,8 +103,7 @@ func (m Model) permissionView(w,h int)string {
    for i:=start;i<len(p.view.Tools)&&i<start+limit;i++{
     tool:=p.view.Tools[i]
     label:=tool.Name+"  ["+tool.Status+"]"
-    if i==p.selected {lines=append(lines,selectedStyle.Render(padded("> "+plain(label,max(1,w-6)),max(1,w-4))))}
-    else {lines=append(lines,"  "+plain(label,max(1,w-6)))}
+    if i==p.selected {lines=append(lines,selectedStyle.Render(padded("> "+plain(label,max(1,w-6)),max(1,w-4))))} else {lines=append(lines,"  "+plain(label,max(1,w-6)))}
    }
    if p.selected<len(p.view.Tools){
     tool:=p.view.Tools[p.selected]
@@ -145,10 +144,11 @@ func (m Model) permissionKey(key string)(tea.Model,tea.Cmd){
  case "complete","error":
   switch key {
   case "esc","q","enter":
+   profile:=p.profile
    m.perm=permissionOverlay{}
-   if m.pm.open && m.pm.stage==1 && m.pm.profileID==p.profile {
+   if m.pm.open && m.pm.stage==1 && m.pm.profileID==profile {
     m.pm.serverBusy=true
-    return m,fetchManagerServers(m.client,p.profile)
+    return m,fetchManagerServers(m.client,profile)
    }
   }
  }
