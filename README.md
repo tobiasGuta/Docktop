@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.5 host telemetry and rates)
+## What works (v0.6 browser readability and performance tooling)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -12,7 +12,7 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 - Recent Docker container CPU and memory history in bounded plots (60 samples; refresh ~5 seconds). CPU is the sum of running-container percentages: 100% equals one CPU core, **not** total host CPU. Memory is the sum of Docker-reported running-container usage.
 - Container CPU, memory, network I/O and block I/O readings where Docker supplies them.
 - Last 100 container log lines (bounded and sanitized), start/stop/restart **only after explicit confirmation**.
-- Read-only MCP catalog browser with client-side search of server names, titles, and descriptions, and a detail pane showing descriptions, tool counts, image/endpoint information.
+- Read-only MCP catalog browser with client-side search of server names, titles, and descriptions, and a detail pane showing descriptions, tool counts, image/endpoint information. MCP, Compose and Hub now have compact, transparent status ribbons with navigation hints.
 - Responsive single-panel mode for narrow terminals. No Docker Desktop or web interface required.
 
 Also supported since v0.3:
@@ -21,7 +21,7 @@ Also supported since v0.3:
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
 - **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of configured profiles; no activation, credential access or server execution.
-- **Measurement helper**: `scripts/measure-process.sh PID` reads the RSS and process-lifetime CPU average of an already running Docktop process. Does not measure Docker containers, and does not claim a comparative benchmark.
+- **Performance sampler**: `scripts/benchmark-process.sh PID [seconds] [interval]` reports interval CPU and resident memory min/mean/peak for Docktop without changing Docker state. The original `scripts/measure-process.sh` remains available for quick legacy snapshots.
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
@@ -92,13 +92,23 @@ docker mcp catalog pull mcp/docker-mcp-catalog:latest
 
 ## Measure Docktop process overhead
 
-After building (`go build -o docktop ./cmd/docktop`), launch `./docktop` in a terminal. In a second terminal, identify its PID with `pgrep -a -x docktop` and run:
+Build a standalone binary first. Running through `go run` spawns a compiler process and complicates PID identification.
 
 ```bash
-./scripts/measure-process.sh <PID>
+go build -o docktop ./cmd/docktop
+./docktop
 ```
 
-The script takes three samples, two seconds apart, using `/proc` and `ps`. RSS reflects Docktop's process memory, **not** the container workloads. CPU shown by `ps` is the process-lifetime average, not a point-in-time idle benchmark. Compare against other tools only with equivalent terminal sizes, refresh settings, loaded resources, and measurement methods.
+In a second terminal, identify the process and benchmark it while the dashboard is visible:
+
+```bash
+pgrep -a -x docktop
+./scripts/benchmark-process.sh <PID> 60 2
+```
+
+This read-only sampler reports interval CPU usage (100% = one logical core) plus resident RAM min, average and peak. It rejects non-Docktop process names, notices PID reuse, and never invokes Docker commands. It measures the Docktop process **only**, excluding child processes, containers, and other Fedora applications. For comparison, run the sampler again while browsing MCP. Results are real process measurements, **not** evidence that Docktop outperforms Docker Desktop without a controlled test on the same hardware.
+
+Legacy quick snapshot: `./scripts/measure-process.sh <PID>`.
 
 ## Development
 

@@ -204,3 +204,32 @@ func TestFrameInheritsTerminalBackground(t *testing.T) {
 		}
 	}
 }
+
+
+func TestBrowserRibbonResponsive(t *testing.T) {
+	for _, dim := range [][2]int{{90, 23}, {120, 35}, {172, 52}} {
+		for _, page := range []int{5, 6, 7} {
+			m := testModel()
+			m.page = page
+			m.width, m.height = dim[0], dim[1]
+			m.compose = []dockercli.ComposeProject{{Name: "test-project", Status: "running(1)"}}
+			m.hub = []dockercli.HubImage{{Name: "nginx", StarCount: 100}}
+			m.hubLoaded = true
+			view := m.View()
+			if page != 7 && !strings.Contains(view, "READ ONLY") {
+				t.Fatalf("page %d lost read-only status", page)
+			}
+			if page == 7 && !strings.Contains(view, "IMAGE DISCOVERY") {
+				t.Fatal("Docker Hub ribbon missing")
+			}
+			if lipgloss.Height(view) > dim[1] {
+				t.Fatalf("page %d rendered %d lines at height %d", page, lipgloss.Height(view), dim[1])
+			}
+			for _, line := range strings.Split(view, "\n") {
+				if lipgloss.Width(line) > dim[0] {
+					t.Fatalf("page %d rendered width %d at %d cols", page, lipgloss.Width(line), dim[0])
+				}
+			}
+		}
+	}
+}

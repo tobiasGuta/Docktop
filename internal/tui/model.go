@@ -831,6 +831,33 @@ func (m Model) body(w, h int) string {
 		}
 		return frame("MCP PROFILES", lines, w, h)
 	}
+	if m.page >= 5 && m.page <= 7 && w >= 82 && h >= 16 {
+		return lipgloss.JoinVertical(lipgloss.Left, m.browserRibbon(w), "", m.browseSplit(w, h-5))
+	}
+	return m.browseSplit(w, h)
+}
+
+// browserRibbon labels the discovery views without extra Docker requests.
+func (m Model) browserRibbon(w int) string {
+	var title, summary, hint string
+	switch m.page {
+	case 5:
+		title = "MCP  /  CATALOG EXPLORER"
+		summary = fmt.Sprintf("SERVERS  %d matched / %d loaded  •  READ ONLY", len(m.filteredServers()), len(m.servers))
+		hint = "[/] local search   [p] profiles   [Enter] details   [r] reload catalog"
+	case 6:
+		title = "DOCKER  /  COMPOSE PROJECTS"
+		summary = fmt.Sprintf("PROJECTS  %d discovered   •   READ ONLY", len(m.compose))
+		hint = "[Enter] inspect config paths   [r] refresh   (never starts services)"
+	case 7:
+		title = "DOCKER HUB  /  IMAGE DISCOVERY"
+		summary = fmt.Sprintf("RESULTS  %d   •   QUERY  %s", len(m.hub), m.hubQuery)
+		hint = "[/] search   [Enter] image details   [p] pull (asks for confirmation)"
+	}
+	return frame(title, []string{cyan.Render(plain(summary, w-4)), muted.Render(plain(hint, w-4))}, w, 4)
+}
+
+func (m Model) browseSplit(w, h int) string {
 	if w < 82 {
 		return frame(tabs[m.page], m.list(w-4, h-2), w, h)
 	}

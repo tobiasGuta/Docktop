@@ -18,3 +18,12 @@ jobs:
         run: go vet ./...
       - name: Build
         run: go build ./cmd/docktop
+      - name: Read-only sampler smoke test
+        run: |
+          bash -n scripts/benchmark-process.sh
+          tmpdir=$(mktemp -d)
+          cp "$(command -v sleep)" "$tmpdir/docktop"
+          "$tmpdir/docktop" 4 &
+          pid=$!
+          bash scripts/benchmark-process.sh "$pid" 2 1
+          wait "$pid"
