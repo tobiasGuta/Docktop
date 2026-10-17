@@ -99,10 +99,14 @@ func (m Model) mcpPlanResult(v mcpPlanDoneMsg)Model{
   p.batchReport+=": "+strings.Join(result.Verified,", ")
  }
  if result.Err!=nil {
-  p.phase="partial"
+  switch result.FailureKind {
+  case "blocked":p.phase="blocked"
+  case "uncertain":p.phase="unverified"
+  default:p.phase="partial"
+  }
   p.errText=result.Err.Error()
   if result.Attempted!=""{
-   p.errText+="; latest attempted tool: "+result.Attempted+" (actual state may be unknown)"
+   p.errText+="; latest attempted tool: "+result.Attempted+" (outcome not independently verified)"
   }
   return m
  }

@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.12 permission editor and readable details)
+## What works (v0.13 MCP management hardening)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -23,6 +23,9 @@ Also supported since v0.3:
 - **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles.
 - **MCP catalog-to-profile add** (`6`, select server, `Shift+A`): choose an existing profile, review the exact `catalog://mcp/docker-mcp-catalog/<server>` reference, and confirm with `y`. Docktop rechecks profile existence, current membership and catalog metadata immediately before the add. No automatic `--enable-all`, gateway launch, or tool execution; Docker MCP itself may expose assigned tools, so treat the change as security-relevant.
 - **Full tool descriptions:** Bounded 4-KiB sanitized descriptions, dedicated right-panel focus (`Tab`) and line/page scrolling (`↑↓`, `PgUp/PgDn`), without fetching live MCP data while navigating.
+- **Harder concurrent-change checks:** Before each staged permission write, Docktop rereads and compares the whole profile tool policy (not just the selected tool) and rechecks membership. It blocks stale plans or unexpected changes; Docker MCP has no compare-and-swap guarantee, so external races remain possible.
+- **Explicit failure accounting:** Plan results distinguish blocked/no write attempted, previously verified partial execution, and an attempted write whose outcome cannot be verified. Never claim an atomic batch or automatic rollback.
+- **Configured MCP clients** (`6`, then `i`): read-only view of local client integration configuration from `docker mcp client ls --global --json`. It shows only client name, profile label and configuration status, never raw client commands, credentials or config. This is **not** a live connection monitor.
 - **Staged MCP permission plans:** Use `Space` on a tool to stage its opposite permission, up to 12 named tools. `v` previews exact changes before `y` authorizes sequential Docker MCP operations. Each tool is rechecked and read back before the next write. There is **no transaction/rollback**; a partial failure reports verified earlier steps and warns about uncertain attempted steps. `c` clears the plan; read-only browsing never writes.
 - **Searchable MCP Tool Explorer:** Search by tool name or description with `/`, filter by annotation group using `g`, and view enabled/disabled counts. A responsive two-panel layout separates permission state, capability hints, and tool descriptions. Classifications use provider-supplied annotations only; unannotated tools stay **unspecified**, never implicitly safe.
 - **Post-change verification:** After approved individual-tool edits or server removal, Docktop reads Docker MCP state again. It reports **verified** only after confirming the target state; if Docker reports success but state cannot be confirmed, Docktop displays an **unverified** warning and requires a fresh inspection. Changes to unrelated tool states are flagged.

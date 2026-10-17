@@ -128,7 +128,7 @@ func (m Model) permissionFooter()string {
 		return "[Esc] Back  [/] Search  [g] Group  [↑↓] Tool  [Tab] Details  [Space] Stage  [v] Review"
 	case "review-tool","review-remove","review-plan":return "[y] Confirm exact change  [n/Esc] Cancel"
 	case "complete":return "[Esc/Enter] Back  •  change verified by Docker readback"
-	case "unverified","partial":return "[Esc/Enter] Back  •  changes may be partial / unverified"
+	case "blocked","unverified","partial":return "[Esc/Enter] Back  •  refresh before retrying changes"
 	default:return "[Esc/Enter] Return to profile manager"
 	}
 }
@@ -142,6 +142,11 @@ func (m Model) permissionView(w,h int)string {
 		lines=append(lines,muted.Render("Reading profile tool policy (secret fields omitted)..."))
 	case "saving":
 		lines=append(lines,amber.Render("Applying the approved change and verifying the result..."))
+	case "blocked":
+		lines=append(lines,amber.Render("PLAN BLOCKED BEFORE ANY WRITE"),p.batchReport,
+			"Detected stale policy, invalid state or failed preflight.")
+		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-13))...)
+		lines=append(lines,"Refresh the profile before preparing another plan.")
 	case "partial":
 		lines=append(lines,amber.Render("STAGED PLAN DID NOT FULLY COMPLETE"),p.batchReport,
 			"Verified steps are NOT automatically undone.")
@@ -152,7 +157,9 @@ func (m Model) permissionView(w,h int)string {
 		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-9))...)
 		lines=append(lines,"State may require a fresh inspection; no success is claimed.")
 	case "unverified":
-		lines=append(lines,amber.Render("WRITE SUCCEEDED; RESULT NOT VERIFIED"),"",
+		headline:="WRITE SUCCEEDED; RESULT NOT VERIFIED"
+		if p.operation=="permission plan" {headline="TOOL WRITE OUTCOME NOT VERIFIED"}
+		lines=append(lines,amber.Render(headline),p.batchReport,
 			"Docker reported success but readback was incomplete or inconsistent.")
 		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-12))...)
 		lines=append(lines,"Inspect again before attempting another permission change.")
@@ -370,7 +377,7 @@ func (m Model) permissionKey(key string)(tea.Model,tea.Cmd){
    p.phase="saving"
    return m,applyMCPPermission(m.client,p.profile,p.server,p.tool,p.operation,p.view)
   }
- case "complete","unverified","partial","error":
+ case "complete","blocked","unverified","partial","error":
   switch key{
   case "esc","q","enter":
    profile:=p.profile

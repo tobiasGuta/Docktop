@@ -34,6 +34,7 @@ var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"
 type Model struct {
 	client                                                                                                 dockercli.Client
 	pm profileManager
+	clients mcpClientBrowser
 	perm permissionOverlay
 	catalogAdd catalogAddModel
 	snapshot                                                                                               dockercli.Snapshot
@@ -250,6 +251,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case configuredClientsMsg:
+		m=m.configuredClientResult(v)
 	case mcpPlanDoneMsg:
 		m=m.mcpPlanResult(v)
 	case permissionsLoadedMsg:
@@ -531,6 +534,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
+		if m.clients.open {
+			return m.configuredClientKey(key)
+		}
 		if m.perm.open {
 			return m.permissionKey(key)
 		}
@@ -692,6 +698,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showProfiles = false
 				m.scroll = 0
 				return m, m.loadExtraPage()
+			}
+		case "i":
+			if m.page==5 {
+				m.clients=mcpClientBrowser{open:true,busy:true}
+				return m,fetchConfiguredClients(m.client)
 			}
 		case "m":
 			if m.page==5 && !m.showProfiles && !m.mcpAssigned {
@@ -904,6 +915,9 @@ func (m Model) footer(w int) string {
 	if m.confirmOperation != "" {
 		return muted.Render(plain("[y] Confirm  [n/Esc] Cancel", w))
 	}
+	if m.clients.open {
+		return muted.Render(plain(m.configuredClientFooter(),w))
+	}
 	if m.perm.open {
 		return muted.Render(plain(m.permissionFooter(), w))
 	}
@@ -937,7 +951,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Manage profiles  [a] Configured  [q] Quit"
+		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Profiles  [i] Clients  [a] Configured  [q] Quit
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -967,7 +981,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; Shift+A add to profile (confirmation required)",
+			"MCP: / Search; Enter inspect; Shift+A add to profile; i configured clients (read-only)",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
@@ -985,6 +999,8 @@ func (m Model) View() string {
 			rows = append([]string{muted.Render("[Esc] Return to catalog to use [a] configured / [p] profiles"), ""}, m.logLines(limit-2, max(8, w-4))...)
 		}
 		b.WriteString(frame(m.detailTitle+"  (Esc to close)", rows, w, available))
+	case m.clients.open:
+		b.WriteString(m.configuredClientView(w,available))
 	case m.perm.open:
 		b.WriteString(m.permissionView(w,available))
 	case m.pm.open:
