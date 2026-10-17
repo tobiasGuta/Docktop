@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
@@ -123,8 +122,8 @@ func (m Model) catalogAddView(w,h int) string {
 			"Return to the catalog, then use [a] to check configured servers.",
 			"Review server tool permissions before connecting an AI client.")
 	case "error":
-		lines=append(lines,red.Render("MCP ASSIGNMENT NOT COMPLETED"),"",
-			wrap(p.errText,max(1,w-4),max(1,h-12))...)
+		lines=append(lines,red.Render("MCP ASSIGNMENT NOT COMPLETED"),"")
+		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-12))...)
 	}
 	return frame("MCP / CATALOG SERVER ASSIGNMENT",lines,w,h)
 }
@@ -202,5 +201,3 @@ func (m Model) catalogAddCompleteResult(v catalogAddCompletedMsg) Model {
 	return m
 }
 
-// Reserved for future extension: never mutate profile permissions here.
-var _ = strings.TrimSpace
