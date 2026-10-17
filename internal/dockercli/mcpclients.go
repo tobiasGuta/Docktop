@@ -11,6 +11,8 @@ import (
 // connection, process or proof of an authenticated client session.
 type MCPClientIntegration struct {
  ID, Label, Profile, State string
+ Installed, OSSupport string
+ HasConfigError bool
 }
 func (c Client) MCPConfiguredClients(ctx context.Context)([]MCPClientIntegration,error){
  raw,err:=c.run(ctx,"mcp","client","ls","--global","--json")
@@ -31,6 +33,9 @@ func parseMCPClientIntegrations(raw []byte)([]MCPClientIntegration,error){
    DisplayName string `json:"displayName"`
    Profile string `json:"profile"`
    Connected *bool `json:"dockerMCPCatalogConnected"`
+   Installed *bool `json:"isInstalled"`
+   OSSupported *bool `json:"isOsSupported"`
+   ConfigError json.RawMessage `json:"error"`
   }
   if err:=json.Unmarshal(entry,&fields);err!=nil{return nil,errors.New("malformed MCP client record")}
   state:="unknown"
@@ -43,9 +48,14 @@ func parseMCPClientIntegrations(raw []byte)([]MCPClientIntegration,error){
    if !identifier(fields.Profile){return nil,errors.New("invalid MCP profile in client record")}
    profile=fields.Profile
   }
+  installed:="unknown"
+  if fields.Installed!=nil {installed="not installed";if *fields.Installed {installed="installed"}}
+  osSupport:="unknown"
+  if fields.OSSupported!=nil {osSupport="unsupported";if *fields.OSSupported {osSupport="supported"}}
+  hasError:=len(fields.ConfigError)>0 && string(fields.ConfigError)!="null"
   label:=Clean(fields.DisplayName,80)
   if label==""{label=id}
-  result=append(result,MCPClientIntegration{ID:id,Label:label,Profile:profile,State:state})
+  result=append(result,MCPClientIntegration{ID:id,Label:label,Profile:profile,State:state,Installed:installed,OSSupport:osSupport,HasConfigError:hasError})
  }
  sort.Slice(result,func(i,j int)bool{return result[i].ID<result[j].ID})
  return result,nil
