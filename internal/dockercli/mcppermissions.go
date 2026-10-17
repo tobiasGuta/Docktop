@@ -69,7 +69,7 @@ func parseMCPPermissions(raw []byte,profile,server string)(MCPPermissionView,err
      hint="other"
     }
    }
-   view.Tools=append(view.Tools,MCPToolPermission{Name:t.Name,Description:Clean(t.Description,180),Status:state,CapabilityHint:hint})
+   view.Tools=append(view.Tools,MCPToolPermission{Name:t.Name,Description:Clean(t.Description,4096),Status:state,CapabilityHint:hint})
   }
   for _,name:=range enabled{if !seen[name]{return MCPPermissionView{},errors.New("allowlisted tool missing from server snapshot")}}
  }
