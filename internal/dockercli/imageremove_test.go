@@ -92,3 +92,107 @@ func TestImageRemovalTargetValidation(t *testing.T) {
 		t.Fatal("accepted unbounded listing")
 	}
 }
+
+type imageRemovalErrorRunner struct {
+	after      string
+	removeErr  error
+	readErr    bool
+	readCount  int
+	removeCount int
+}
+
+func (f *imageRemovalErrorRunner) Run(_ context.Context, args ...string) ([]byte, error) {
+	switch strings.Join(args, " ") {
+	case "context show":
+		return []byte("default\n"), nil
+	case "--context default image ls --no-trunc --format {{json .}}":
+		f.readCount++
+		if f.readCount == 1 {
+			return []byte(helloImage), nil
+		}
+		if f.readErr {
+			return nil, errors.New("PRIVATE_TOKEN_NOT_FOR_UI")
+		}
+		return []byte(f.after), nil
+	case "--context default image rm -- hello-world:latest":
+		f.removeCount++
+		return nil, f.removeErr
+	default:
+		return nil, errors.New("unexpected Docker invocation")
+	}
+}
+
+func TestImageRemovalErrorReportingAfterReadback(t *testing.T) {
+	tests := []struct {
+		name        string
+		removeErr   error
+		after       string
+		readErr     bool
+		wantOutcome string
+		wantReason  string
+	}{
+		{
+			name: "container conflict unchanged tag",
+			removeErr: errors.New("conflict: image is being used by stopped container 566fb4 PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: helloImage,
+			wantOutcome: "not_removed",
+			wantReason: "existing container",
+		},
+		{
+			name: "generic command failure unchanged tag",
+			removeErr: errors.New("unknown flag or permission denied PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: helloImage,
+			wantOutcome: "not_removed",
+			wantReason: "Docker reported an error",
+		},
+		{
+			name: "removal error but tag absent",
+			removeErr: errors.New("PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: "",
+			wantOutcome: "verified",
+			wantReason: "does not prove the command succeeded",
+		},
+		{
+			name: "retargeted image after command failure",
+			removeErr: errors.New("PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: changedImage,
+			wantOutcome: "unverified",
+			wantReason: "ambiguous",
+		},
+		{
+			name: "duplicate reference after command failure",
+			removeErr: errors.New("PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: helloImage + helloImage,
+			wantOutcome: "unverified",
+			wantReason: "ambiguous",
+		},
+		{
+			name: "readback failure",
+			removeErr: errors.New("PRIVATE_TOKEN_NOT_FOR_UI"),
+			readErr: true,
+			wantOutcome: "unverified",
+			wantReason: "readback failed",
+		},
+		{
+			name: "success status but tag still present",
+			after: helloImage,
+			wantOutcome: "unverified",
+			wantReason: "still lists",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			f := &imageRemovalErrorRunner{after: tc.after, removeErr: tc.removeErr, readErr: tc.readErr}
+			result := (Client{Runner: f}).RemoveImageTag(context.Background(), helloTarget())
+			if result.Outcome != tc.wantOutcome || !strings.Contains(result.Reason, tc.wantReason) {
+				t.Fatalf("unexpected outcome: %+v", result)
+			}
+			if strings.Contains(result.Reason, "PRIVATE_TOKEN_NOT_FOR_UI") || strings.Contains(result.Reason, "566fb4") {
+				t.Fatalf("Docker stderr leaked: %+v", result)
+			}
+			if f.removeCount != 1 || f.readCount != 2 {
+				t.Fatalf("expected one removal attempt and both image-list reads: %+v", f)
+			}
+		})
+	}
+}

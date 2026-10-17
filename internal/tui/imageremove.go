@@ -98,7 +98,7 @@ func (m Model) imageRemovalView(w, h int) string {
 	case "result":
 		lines = append(lines, "", "RESULT: "+plain(p.outcome, 24),
 			plain(p.notice, max(8, w-4)), "",
-			"Only VERIFIED means the selected reference disappeared.")
+			"VERIFIED means the selected tag is absent on readback, not that Docker reported success.")
 	}
 	return frame("IMAGES / REVIEW TAG REMOVAL", lines, w, h)
 }

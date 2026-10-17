@@ -78,3 +78,27 @@ func assertViewFits(t *testing.T, m Model, width, height int) {
 		if lipgloss.Width(line)>width {t.Fatalf("width %d exceeds %d",lipgloss.Width(line),width)}
 	}
 }
+
+func TestImageRemovalNotRemovedDisplaysReasonWithoutRefresh(t *testing.T) {
+	m := imageReviewFixture()
+	view, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = view.(Model)
+	view, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = view.(Model)
+	target := m.imageRemoval.target
+	view, cmd := m.Update(imageRemovalDoneMsg{
+		target: target,
+		result: dockercli.ImageRemovalResult{
+			Outcome: "not_removed",
+			Reason: "Docker refused removal because an existing container references this image.",
+		},
+	})
+	m = view.(Model)
+	if cmd != nil || m.imageRemoval.outcome != "not_removed" {
+		t.Fatal("not_removed result must not dispatch a refresh or second write")
+	}
+	screen := m.View()
+	if !strings.Contains(screen, "not_removed") || !strings.Contains(screen, "existing container") {
+		t.Fatal("not_removed result or safe reason is missing from the UI")
+	}
+}

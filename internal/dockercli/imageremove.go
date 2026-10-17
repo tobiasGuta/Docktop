@@ -21,7 +21,7 @@ type ImageRemovalTarget struct {
 func (t ImageRemovalTarget) Reference() string { return t.Repository + ":" + t.Tag }
 
 type ImageRemovalResult struct {
-	Outcome string // "blocked", "verified", or "unverified"
+	Outcome string // "blocked", "not_removed", "verified", or "unverified"
 	Reason  string // fixed, safe UI wording only; never raw Docker stderr
 }
 
@@ -74,6 +74,17 @@ func selectedImageCount(images []Image, target ImageRemovalTarget) (count int, s
 	return count, sameID
 }
 
+// imageRemovalErrorReason classifies a known container-reference conflict into
+// fixed UI wording. Docker stderr and error strings are never returned to the TUI.
+func imageRemovalErrorReason(err error) string {
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "container") &&
+		(strings.Contains(message, "is being used by") || strings.Contains(message, "image is in use by")) {
+		return "Docker refused removal because an existing container references this image."
+	}
+	return "Docker reported an error while attempting image removal."
+}
+
 // RemoveImageTag is only reached after UI approval. It checks the active
 // context and exact image reference/ID again before dispatch. Docker has no
 // atomic compare-and-delete, so changes between the last read and rm remain
@@ -109,22 +120,36 @@ func (c Client) RemoveImageTag(ctx context.Context, target ImageRemovalTarget) I
 		return blocked("The selected image reference or ID changed; refresh and review again.")
 	}
 	// The explicit -- ends option parsing. Never pass --force or --no-prune.
-	_, err = c.Runner.Run(ctx, "--context", target.Context, "image", "rm", "--", target.Reference())
-	if err != nil {
-		return unverified("Docker reported an error after removal was attempted; refresh before retrying.")
-	}
-	// A successful rm may only untag a reference; verify that exact tag vanished.
+	_, removalErr := c.Runner.Run(ctx, "--context", target.Context, "image", "rm", "--", target.Reference())
+
+	// Read back even if Docker reports an error. Never infer final image state
+	// from the CLI exit status alone, and never render untrusted CLI stderr.
 	raw, err = c.Runner.Run(ctx, listArgs...)
 	if err != nil {
-		return unverified("Removal was dispatched but image-list readback failed.")
+		return unverified("Image removal was attempted, but image-list readback failed; refresh before retrying.")
 	}
 	images, err = parseImageListing(raw)
 	if err != nil {
-		return unverified("Removal was dispatched but image-list readback could not be validated.")
+		return unverified("Image removal was attempted, but image-list readback was invalid; refresh before retrying.")
 	}
-	count, _ = selectedImageCount(images, target)
-	if count != 0 {
-		return unverified("Docker still lists the selected image tag; refresh before retrying.")
+	count, same = selectedImageCount(images, target)
+	if count > 1 || (count == 1 && !same) {
+		return unverified("The image reference changed or is ambiguous after the attempt; refresh before retrying.")
 	}
-	return ImageRemovalResult{Outcome: "verified", Reason: "Selected image tag is no longer listed by Docker."}
+	if count == 0 {
+		if removalErr != nil {
+			return ImageRemovalResult{
+				Outcome: "verified",
+				Reason:  "Docker reported an error, but readback confirms that the selected image tag is absent. This does not prove the command succeeded.",
+			}
+		}
+		return ImageRemovalResult{Outcome: "verified", Reason: "Readback confirms the selected image tag is absent."}
+	}
+	if removalErr != nil {
+		return ImageRemovalResult{
+			Outcome: "not_removed",
+			Reason:  imageRemovalErrorReason(removalErr) + " Readback confirms the selected tag still points to the same image.",
+		}
+	}
+	return unverified("Docker reported success, but readback still lists the selected image tag; refresh before retrying.")
 }
