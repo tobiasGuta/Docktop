@@ -23,7 +23,7 @@ func (r *concurrentPolicyRunner) Run(_ context.Context,args ...string)([]byte,er
   return []byte(`[{"profile":"development","name":"github-official"}]`),nil
  case "mcp profile show development --format json":
   r.reads++
-  if r.injectBeforeSecond && r.writes==1 && r.reads>=8{
+  if r.injectBeforeSecond && r.writes==1 && r.reads>=6{
    // Simulated separate MCP client changing a DIFFERENT tool between steps.
    r.mode=`["second"]`
   }
@@ -56,7 +56,7 @@ func TestMCPPlanConcurrentChangeBlocksFollowingWrite(t *testing.T){
  expected,err:=c.MCPReadPermissions(context.Background(),"development","github-official")
  if err!=nil{t.Fatal(err)}
  result:=c.MCPApplyToolPlan(context.Background(),"development","github-official",expected,[]MCPToolChange{{Tool:"first",Enable:false},{Tool:"second",Enable:false}})
- if result.Err==nil||result.FailureKind!="uncertain"||result.WritesAttempted!=1||len(result.Verified)!=1||r.writes!=1{
+ if result.Err==nil||result.FailureKind!="partial"||result.WritesAttempted!=1||len(result.Verified)!=1||r.writes!=1{
   t.Fatalf("unexpected concurrent-change accounting: %+v, writes=%d",result,r.writes)
  }
 }

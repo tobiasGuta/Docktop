@@ -15,7 +15,7 @@ type MCPToolPlanResult struct {
  Attempted string
  After MCPPermissionView
  Err error
- FailureKind string // blocked (no write attempted), uncertain (write attempted, result not verified)
+ FailureKind string // blocked, partial (earlier steps verified), uncertain (attempted tool unresolved)
  WritesAttempted int
 }
 
@@ -27,7 +27,9 @@ func (c Client) MCPApplyToolPlan(ctx context.Context, profile, server string, ex
  result:=MCPToolPlanResult{}
  fail:=func(err error) MCPToolPlanResult {
   result.Err=err
-  if result.WritesAttempted>0 {result.FailureKind="uncertain"} else {result.FailureKind="blocked"}
+  if result.Attempted!="" {result.FailureKind="uncertain"
+  } else if len(result.Verified)>0 {result.FailureKind="partial"
+  } else {result.FailureKind="blocked"}
   return result
  }
  if !identifier(profile)||!identifier(server)||expected.Profile!=profile||expected.Server!=server {
