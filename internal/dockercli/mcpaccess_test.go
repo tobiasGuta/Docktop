@@ -55,7 +55,7 @@ func TestToolChangeFailsClosed(t *testing.T){
 func TestProfileAllowlistJSONShapes(t *testing.T){
 	profiles,err:=parseProfiles([]byte(`{"profiles":[{"id":"web-dev","name":"Web"}]}`))
 	if err!=nil||len(profiles)!=1 {t.Fatalf("envelope: %v %+v",err,profiles)}
-	servers,err:=parseProfileServers([]byte(`{"profiles":[{"id":"web-dev","servers":[{"name":"playwright"}]},{"id":"other","servers":[{"name":"github"}]}]}`),"web-dev")
+	servers,err:=parseProfileServers([]byte(`{"profiles":[{"id":"web-dev","servers":[{"snapshot":{"server":{"name":"playwright"}}}]},{"id":"other","servers":[{"snapshot":{"server":{"name":"github"}}}]}]}`),"web-dev")
 	if err!=nil||len(servers)!=1||servers[0].Name!="playwright"{t.Fatalf("grouped: %v %+v",err,servers)}
 	for _,payload:=range []string{`{}`,`{"profiles":[{"id":"--invalid"}]}`}{
 		if _,err:=parseProfiles([]byte(payload));err==nil{t.Fatalf("accepted %s",payload)}
