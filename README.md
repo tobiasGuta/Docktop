@@ -17,6 +17,7 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 
 Also supported since v0.3:
 
+- **Reviewed image-tag removal** (`3`, select a tagged image, `d`): shows exact repository, tag, image ID and Docker context; requires `y` confirmation; rereads the active context and target image reference/ID before invoking ordinary `docker image rm` without force. Readback checks that the selected tag is absent, reporting blocked or unverified results when appropriate. Dangling/untagged images are intentionally unsupported; removing one tag need not reclaim the underlying image layers.
 - **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths; requires Docker Compose CLI plugin.
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
@@ -38,7 +39,7 @@ Also supported since v0.3:
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
-Not yet implemented: Compose management operations, container creation, advanced image management, live MCP session telemetry or automatic MCP client installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
+Not yet implemented: Compose management operations, container creation, advanced image management beyond reviewed tag removal, live MCP session telemetry or automatic MCP client installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
 
 ### Local host metrics (Linux only)
 
