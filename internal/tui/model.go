@@ -250,6 +250,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case mcpPlanDoneMsg:
+		m=m.mcpPlanResult(v)
 	case permissionsLoadedMsg:
 		m=m.permissionResult(v)
 	case permissionsChangedMsg:
