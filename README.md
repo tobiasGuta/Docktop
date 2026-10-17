@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.7 MCP inspector)
+## What works (v0.8 MCP profile tool permissions)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -20,7 +20,8 @@ Also supported since v0.3:
 - **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths; requires Docker Compose CLI plugin.
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
-- **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles. No activation, credential access or server execution.
+- **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles.
+- **Profile tool permission manager** (`6`, then `m`): navigate a structured profile list, select an assigned server, press `e` to request enabling **all** its tools or `d` to request disabling **all** its tools. An explicit `y` confirmation is required. Profile IDs and server membership are rechecked before modifying tool permissions. This neither adds/removes a server nor starts it. Changes may affect connected clients immediately.
 - **Performance sampler**: `scripts/benchmark-process.sh PID [seconds] [interval]` reports interval CPU and resident memory min/mean/peak for Docktop without changing Docker state. The original `scripts/measure-process.sh` remains available for quick legacy snapshots.
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
@@ -72,11 +73,12 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 | `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
 | `a` | MCP tab: toggle configured servers across profiles (read-only); close an inspection with `Esc` first |
+| `m` | MCP tab: open profile tool-permission manager. Select profile with Enter, choose server, `e` enable all tools / `d` disable all tools, `y` confirm or `n` cancel. `Esc` backs out. |
 | `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution); `Esc` returns to the catalog |
 | `?` | Show help; `Esc` closes prompts or details |
 | `q`, `Ctrl+C` | Exit |
 
-MCP inspection is a modal view: press `Esc` to return to the catalog before using `p` or `a`. The footer changes with the active view so unavailable actions aren't presented as active. Search on the MCP page is local and does not re-fetch the full catalog on every keystroke. To access MCP browsing, prepare the catalog separately:
+MCP permission management uses `docker mcp profile tools --enable-all/--disable-all`, not server membership or gateway execution. The current per-tool permission state is not inferred from the server list. Unsupported JSON formats fail closed; if your Docker MCP plugin returns a different schema, share the error rather than attempting a blind write. Enabling all tools can expand an agent's capabilities. MCP inspection is a modal view: press `Esc` to return to the catalog before using `p` or `a`. The footer changes with the active view so unavailable actions aren't presented as active. Search on the MCP page is local and does not re-fetch the full catalog on every keystroke. To access MCP browsing, prepare the catalog separately:
 
 ```bash
 docker mcp --help

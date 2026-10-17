@@ -33,6 +33,7 @@ var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"
 
 type Model struct {
 	client                                                                                                 dockercli.Client
+	pm profileManager
 	snapshot                                                                                               dockercli.Snapshot
 	width, height                                                                                          int
 	page, selected, scroll                                                                                 int
@@ -247,6 +248,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case managerProfilesMsg:
+		if m.pm.open && m.pm.stage==0 {
+			m.pm.busy=false
+			if v.err!=nil { m.pm.errText=v.err.Error();m.pm.profiles=nil }else{m.pm.errText="";m.pm.profiles=v.values;m.pm.profileIndex=0}
+		}
+	case managerServersMsg:
+		if m.pm.open && m.pm.stage==1 && m.pm.profileID==v.profile {
+			m.pm.serverBusy=false
+			if v.err!=nil {m.pm.errText=v.err.Error();m.pm.servers=nil}else{m.pm.errText="";m.pm.servers=v.values;m.pm.serverIndex=0}
+		}
+	case managerChangedMsg:
+		if m.pm.open && m.pm.profileID==v.profile {
+			m.pm.saving=false
+			if v.err!=nil {
+				m.pm.notice=""
+				m.pm.errText="Permission change failed: "+v.err.Error()
+			}else{
+				op:="enabled all tools for"
+				if !v.enable {op="disabled all tools for"}
+				m.pm.notice=op+" "+v.server+" in "+v.profile
+				m.pm.errText=""
+				m.pm.serverBusy=true
+				return m,fetchManagerServers(m.client,v.profile)
+			}
+		}
 	case hostMsg:
 		m.hostBusy = false
 		if v.err != nil {
@@ -478,6 +504,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
+		if m.pm.open {
+			return m.managerKey(key)
+		}
 		if m.detailTitle != "" {
 			switch key {
 			case "esc", "q":
@@ -613,6 +642,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showProfiles = false
 				m.scroll = 0
 				return m, m.loadExtraPage()
+			}
+		case "m":
+			if m.page==5 && !m.showProfiles && !m.mcpAssigned {
+				m.pm=profileManager{open:true,busy:true}
+				return m,fetchManagerProfiles(m.client)
 			}
 		case "p":
 			if m.page == 5 {
@@ -820,6 +854,9 @@ func (m Model) footer(w int) string {
 	if m.confirmOperation != "" {
 		return muted.Render(plain("[y] Confirm  [n/Esc] Cancel", w))
 	}
+	if m.pm.open {
+		return muted.Render(plain(m.managerFooter(), w))
+	}
 	if m.detailTitle != "" {
 		help := "[Esc/q] Back  [↑↓/PgUp/PgDn] Scroll"
 		if m.page == 5 && strings.HasPrefix(m.detailTitle, "MCP CATALOG / ") {
@@ -844,7 +881,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [Enter] Inspect tools  [p] Profiles  [a] Configured  [r] Reload  [q] Quit"
+		help = "[/] Search  [Enter] Inspect tools  [m] Manage policies  [p] Profiles  [a] Configured  [r] Reload  [q] Quit"
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -874,7 +911,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: /  Search; Enter  Inspect advertised tools; p  Profiles; a  Configured servers",
+			"MCP: / Search; Enter inspect; m tool permissions; p profiles; a configured servers",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
@@ -892,6 +929,8 @@ func (m Model) View() string {
 			rows = append([]string{muted.Render("[Esc] Return to catalog to use [a] configured / [p] profiles"), ""}, m.logLines(limit-2, max(8, w-4))...)
 		}
 		b.WriteString(frame(m.detailTitle+"  (Esc to close)", rows, w, available))
+	case m.pm.open:
+		b.WriteString(m.managerView(w,available))
 	case m.showItem:
 		b.WriteString(frame("DETAILS  (Enter/Esc to return)", m.details(w-4), w, available))
 	default:
@@ -957,7 +996,7 @@ func (m Model) browserRibbon(w int) string {
 	case 5:
 		title = "MCP  /  CATALOG EXPLORER"
 		summary = fmt.Sprintf("SERVERS  %d matched / %d loaded  •  READ ONLY", len(m.filteredServers()), len(m.servers))
-		hint = "[/] search   [Enter] inspect tools   [p] profiles   [a] configured   [r] reload"
+		hint = "[/] search   [Enter] inspect tools   [m] manage policy   [p] profiles   [a] assigned"
 	case 6:
 		title = "DOCKER  /  COMPOSE PROJECTS"
 		summary = fmt.Sprintf("PROJECTS  %d discovered   •   READ ONLY", len(m.compose))

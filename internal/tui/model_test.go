@@ -348,3 +348,44 @@ func TestContextFooterForOtherModals(t *testing.T) {
 		t.Fatal("logs footer is not contextual")
 	}
 }
+
+
+func TestMCPManagerReviewRequired(t *testing.T){
+	m:=testModel()
+	m.page=5
+	updated,cmd:=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'m'}})
+	m=updated.(Model)
+	if !m.pm.open || !m.pm.busy || cmd==nil {t.Fatal("manager must load profiles")}
+	updated,_=m.Update(managerProfilesMsg{values:[]dockercli.MCPProfile{{ID:"web-dev",Name:"Web Development"}}})
+	m=updated.(Model)
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyEnter})
+	m=updated.(Model)
+	if m.pm.stage!=1 || m.pm.profileID!="web-dev" || cmd==nil {t.Fatal("profile selection failed")}
+	updated,_=m.Update(managerServersMsg{profile:"web-dev",values:[]dockercli.MCPProfileServer{{Name:"github-official"}}})
+	m=updated.(Model)
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'e'}})
+	m=updated.(Model)
+	if m.pm.action!="enable" || m.pm.target!="github-official" || cmd!=nil {t.Fatal("enable must only stage review")}
+	if !strings.Contains(m.View(),"ENABLE ALL TOOLS") || !strings.Contains(m.View(),"Press y") {t.Fatal("confirmation not rendered")}
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'n'}})
+	m=updated.(Model)
+	if m.pm.action!="" || cmd!=nil {t.Fatal("cancel should never invoke Docker")}
+	updated,_=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'d'}})
+	m=updated.(Model)
+	if m.pm.action!="disable" {t.Fatal("disable not staged")}
+	updated,cmd=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'y'}})
+	m=updated.(Model)
+	if cmd==nil || !m.pm.saving {t.Fatal("explicit y must create approved command")}
+	updated,_=m.Update(managerChangedMsg{profile:"web-dev",server:"github-official",enable:false})
+	m=updated.(Model)
+	if m.pm.saving || !m.pm.serverBusy || !strings.Contains(m.pm.notice,"disabled all") {t.Fatal("success needs refresh and notice")}
+}
+func TestManagerEscapeAndLateResponse(t *testing.T){
+	m:=testModel();m.page=5
+	updated,_:=m.Update(tea.KeyMsg{Type:tea.KeyRunes,Runes:[]rune{'m'}});m=updated.(Model)
+	updated,_=m.Update(tea.KeyMsg{Type:tea.KeyEsc});m=updated.(Model)
+	if m.pm.open {t.Fatal("did not close manager")}
+	updated,_=m.Update(managerProfilesMsg{values:[]dockercli.MCPProfile{{ID:"secret",Name:"bad"}}})
+	m=updated.(Model)
+	if m.pm.open || len(m.pm.profiles)!=0 {t.Fatal("stale async response revived manager")}
+}
