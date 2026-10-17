@@ -258,6 +258,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pm.serverBusy=false
 			if v.err!=nil {m.pm.errText=v.err.Error();m.pm.servers=nil}else{m.pm.errText="";m.pm.servers=v.values;m.pm.serverIndex=0}
 		}
+	case managerCreatedMsg:
+		if m.pm.open && m.pm.saving {
+			m.pm.saving=false
+			if v.err!=nil {
+				m.pm.notice=""
+				m.pm.errText="Profile creation failed: "+v.err.Error()
+			}else{
+				m.pm.errText=""
+				m.pm.notice="Created empty profile "+v.name+". No servers or tools enabled."
+				m.pm.busy=true
+				return m,fetchManagerProfiles(m.client)
+			}
+		}
 	case managerChangedMsg:
 		if m.pm.open && m.pm.profileID==v.profile {
 			m.pm.saving=false
@@ -911,7 +924,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; m tool permissions; p profiles; a configured servers",
+			"MCP: / Search; Enter inspect; m profile manager/create; p profiles; a configured"
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
