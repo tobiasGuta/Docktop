@@ -449,7 +449,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end":
 			m.selected = max(0, m.rowCount()-1)
 		case "enter":
-			if m.page == 1 && m.selected < len(m.snapshot.Containers) {
+			if (m.page == 0 || m.page == 1) && m.selected < len(m.snapshot.Containers) {
 				c := m.snapshot.Containers[m.selected]
 				return m, inspectResource(m.client, "container", c.ID, "INSPECT / "+c.Names)
 			}
@@ -506,7 +506,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.confirmID = m.snapshot.Context
 			}
 		case "l":
-			if m.page == 1 && m.selected < len(m.snapshot.Containers) {
+			if (m.page == 0 || m.page == 1) && m.selected < len(m.snapshot.Containers) {
 				c := m.snapshot.Containers[m.selected]
 				m.message = "Loading logs for " + c.Names
 				return m, loadLogs(m.client, c.ID, c.Names)
