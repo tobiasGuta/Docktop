@@ -81,6 +81,8 @@ func (m Model) configuredClientView(w,h int)string {
  rightWidth:=w-leftWidth-1
  list:=[]string{cyan.Render(fmt.Sprintf("CLIENTS / %d",len(p.items))),"",
   muted.Render("Configuration only; no live-session claims."),""}
+ if p.busy{list=append(list,muted.Render("Reading configured MCP clients..."))}
+ if p.errorText!=""{list=append(list,red.Render(plain(p.errorText,max(1,leftWidth-4))))}
  capacity:=max(1,h-len(list)-3)
  start:=max(0,p.selected-capacity+1)
  for i:=start;i<len(p.items)&&i<start+capacity;i++{

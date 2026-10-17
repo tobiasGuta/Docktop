@@ -42,7 +42,7 @@ func TestToolStageClearAndPartialAccounting(t *testing.T){
   Verified:[]string{"get_file"},Attempted:"create_issue",Err:fmt.Errorf("readback mismatch"),
  }}
  step,cmd=m.Update(msg);m=step.(Model)
- if cmd!=nil||m.perm.phase!="partial"||!strings.Contains(m.View(),"1 changes verified")||!strings.Contains(m.View(),"may be unknown") {
+ if cmd!=nil||m.perm.phase!="partial"||!strings.Contains(m.View(),"1 changes verified")||!strings.Contains(m.View(),"outcome not independently verified") {
   t.Fatal("partial result incorrectly claims complete success")
  }
 }
