@@ -81,7 +81,7 @@ func (m Model) configuredClientResult(v configuredClientsMsg)Model{
  p.busy=false
  if v.err!=nil{
   p.items=nil
-  p.errorText="Could not read Docker MCP client configuration. No changes made."
+  p.errorText="Unable to read client configurations. No changes made."
  }else{
   p.errorText=""
   p.items=v.values
@@ -235,7 +235,7 @@ func (m Model) configuredClientView(w,h int)string {
   }else{list=append(list,"  "+label)}
  }
  right:=[]string{cyan.Render("SELECTED CLIENT"),"",
-  amber.Render("Local integration state, not live telemetry."),""}
+  amber.Render("Not live connection telemetry."),""}
  if item,ok:=p.selectedClient();ok&&!p.busy&&p.errorText=="" {
   status:=muted.Render(item.State)
   if item.State=="configured"{status=green.Render(item.State)}
