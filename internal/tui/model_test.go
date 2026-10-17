@@ -1,6 +1,7 @@
 package tui
 
 import (
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
 	"github.com/tobiasGuta/Docktop/internal/mcpcatalog"
@@ -23,7 +24,7 @@ func testModel() Model {
 }
 func TestViewFitsTerminal(t *testing.T) {
 	for _, dim := range [][2]int{{110, 32}, {80, 24}, {50, 16}, {30, 10}} {
-		for page := 0; page < 6; page++ {
+		for page := 0; page < 8; page++ {
 			m := testModel()
 			m.width, m.height = dim[0], dim[1]
 			m.page = page
@@ -62,5 +63,41 @@ func TestMCPFilteringAndSelection(t *testing.T) {
 func TestPlainRemovesEscapeCodes(t *testing.T) {
 	if got := plain("abc\x1b[2Jdef", 10); got != "abcdef" {
 		t.Fatalf("unsafe output: %q", got)
+	}
+}
+
+func TestExtraPagesAndHubAdmission(t *testing.T) {
+	m := testModel()
+	m.page = 7
+	m.hub = []dockercli.HubImage{{Name: "nginx", Description: "web server", StarCount: 100}}
+	m.hubLoaded = true
+	if m.rowCount() != 1 || !strings.Contains(strings.Join(m.details(70), " "), "web server") {
+		t.Fatal("Hub browsing failed")
+	}
+	before, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	next := before.(Model)
+	if next.confirmOperation != "pull" || next.confirmName != "nginx" {
+		t.Fatal("pull must require confirmation")
+	}
+	before, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next = before.(Model)
+	if next.confirmOperation != "" {
+		t.Fatal("confirmation did not cancel")
+	}
+	m.page = 6
+	m.compose = []dockercli.ComposeProject{{Name: "web", Status: "running(1)"}}
+	if m.rowCount() != 1 || !strings.Contains(strings.Join(m.details(70), " "), "web") {
+		t.Fatal("compose browsing failed")
+	}
+}
+func TestProfileToggle(t *testing.T) {
+	m := testModel()
+	m.page = 5
+	m.profilesLoaded = true
+	m.profilesText = "Profile: test"
+	v, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	n := v.(Model)
+	if !n.showProfiles || !strings.Contains(n.View(), "Profile: test") {
+		t.Fatal("profile view not toggled")
 	}
 }

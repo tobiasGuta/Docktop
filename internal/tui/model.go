@@ -27,23 +27,27 @@ var (
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24"))
 	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color("61"))
 )
-var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog"}
-var shortTabs = []string{"Home", "Ctrs", "Img", "Net", "Vol", "MCP"}
+var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog", "Compose", "Docker Hub"}
+var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"}
 
 type Model struct {
-	client                                   dockercli.Client
-	snapshot                                 dockercli.Snapshot
-	width, height                            int
-	page, selected, scroll                   int
-	busy, mcpBusy, mcpLoaded                 bool
-	message                                  string
-	mcpText, mcpFilter                       string
-	servers                                  []mcpcatalog.Server
-	editingFilter                            bool
-	confirmOperation, confirmID, confirmName string
-	detailTitle, detailText                  string
-	showHelp, showItem                       bool
-	cpuHistory, memHistory                   []float64
+	client                                                                                                 dockercli.Client
+	snapshot                                                                                               dockercli.Snapshot
+	width, height                                                                                          int
+	page, selected, scroll                                                                                 int
+	busy, mcpBusy, mcpLoaded                                                                               bool
+	message                                                                                                string
+	mcpText, mcpFilter                                                                                     string
+	servers                                                                                                []mcpcatalog.Server
+	editingFilter                                                                                          bool
+	confirmOperation, confirmID, confirmName                                                               string
+	detailTitle, detailText                                                                                string
+	showHelp, showItem                                                                                     bool
+	cpuHistory, memHistory                                                                                 []float64
+	compose                                                                                                []dockercli.ComposeProject
+	hub                                                                                                    []dockercli.HubImage
+	hubQuery, hubError, composeError, profilesError, profilesText                                          string
+	composeBusy, composeLoaded, hubBusy, hubLoaded, hubEditing, profilesBusy, profilesLoaded, showProfiles bool
 }
 
 type snapshotMsg struct {
@@ -63,6 +67,26 @@ type changedMsg struct {
 	err             error
 }
 type tickMsg time.Time
+type composeMsg struct {
+	data []dockercli.ComposeProject
+	err  error
+}
+type hubMsg struct {
+	data []dockercli.HubImage
+	err  error
+}
+type profilesMsg struct {
+	data string
+	err  error
+}
+type inspectMsg struct {
+	title, text string
+	err         error
+}
+type pulledMsg struct {
+	image string
+	err   error
+}
 
 func New() Model { return Model{client: dockercli.New(), width: 100, height: 30, busy: true} }
 func poll(client dockercli.Client) tea.Cmd {
@@ -76,6 +100,24 @@ func loadLogs(client dockercli.Client, id, name string) tea.Cmd {
 }
 func change(client dockercli.Client, op, id, name string) tea.Cmd {
 	return func() tea.Msg { e := client.Change(context.Background(), op, id); return changedMsg{op, name, e} }
+}
+func loadCompose(c dockercli.Client) tea.Cmd {
+	return func() tea.Msg { v, e := c.ComposeProjects(context.Background()); return composeMsg{v, e} }
+}
+func searchHub(c dockercli.Client, q string) tea.Cmd {
+	return func() tea.Msg { v, e := c.SearchHub(context.Background(), q); return hubMsg{v, e} }
+}
+func loadProfiles(c dockercli.Client) tea.Cmd {
+	return func() tea.Msg { v, e := c.MCPProfiles(context.Background()); return profilesMsg{v, e} }
+}
+func inspectResource(c dockercli.Client, kind, id, title string) tea.Cmd {
+	return func() tea.Msg {
+		v, e := c.InspectSummary(context.Background(), kind, id)
+		return inspectMsg{title, v, e}
+	}
+}
+func pullHub(c dockercli.Client, name, ctx string) tea.Cmd {
+	return func() tea.Msg { e := c.PullHub(context.Background(), name, ctx); return pulledMsg{name, e} }
 }
 func tick() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
@@ -111,7 +153,14 @@ func (m Model) rowCount() int {
 	case 4:
 		return len(m.snapshot.Volumes)
 	case 5:
+		if m.showProfiles {
+			return 0
+		}
 		return len(mcpcatalog.Filter(m.servers, m.mcpFilter))
+	case 6:
+		return len(m.compose)
+	case 7:
+		return len(m.hub)
 	}
 	return 0
 }
@@ -121,6 +170,27 @@ func (m *Model) switchPage(p int) {
 	m.scroll = 0
 	m.message = ""
 	m.showItem = false
+}
+func (m *Model) loadExtraPage() tea.Cmd {
+	switch m.page {
+	case 5:
+		if m.showProfiles {
+			if !m.profilesLoaded && !m.profilesBusy {
+				m.profilesBusy = true
+				return loadProfiles(m.client)
+			}
+			return nil
+		}
+		if !m.mcpLoaded {
+			return m.fetchMCP()
+		}
+	case 6:
+		if !m.composeLoaded && !m.composeBusy {
+			m.composeBusy = true
+			return loadCompose(m.client)
+		}
+	}
+	return nil
 }
 func (m *Model) fetchMCP() tea.Cmd {
 	if m.mcpBusy {
@@ -156,6 +226,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.clampSelection()
+	case composeMsg:
+		m.composeBusy = false
+		m.composeLoaded = true
+		if v.err != nil {
+			m.composeError = v.err.Error()
+		} else {
+			m.compose = v.data
+			m.composeError = ""
+		}
+		m.clampSelection()
+	case hubMsg:
+		m.hubBusy = false
+		m.hubLoaded = true
+		if v.err != nil {
+			m.hubError = v.err.Error()
+			m.hub = nil
+		} else {
+			m.hub = v.data
+			m.hubError = ""
+		}
+		m.selected = 0
+	case profilesMsg:
+		m.profilesBusy = false
+		m.profilesLoaded = true
+		if v.err != nil {
+			m.profilesError = v.err.Error()
+			m.profilesText = ""
+		} else {
+			m.profilesText = v.data
+			m.profilesError = ""
+		}
+	case inspectMsg:
+		if v.err != nil {
+			m.message = "Inspect: " + v.err.Error()
+		} else {
+			m.detailTitle = v.title
+			m.detailText = v.text
+			m.scroll = 0
+		}
+	case pulledMsg:
+		if v.err != nil {
+			m.message = "Image pull failed: " + v.err.Error()
+		} else {
+			m.message = "Pulled image: " + v.image
+			m.busy = true
+			return m, poll(m.client)
+		}
 	case mcpMsg:
 		m.mcpBusy = false
 		if v.err != nil {
@@ -202,10 +319,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				op, id, name := m.confirmOperation, m.confirmID, m.confirmName
 				m.confirmOperation, m.confirmID, m.confirmName = "", "", ""
 				m.message = "Running " + op + " for " + name
+				if op == "pull" {
+					return m, pullHub(m.client, name, id)
+				}
 				return m, change(m.client, op, id, name)
 			}
 			if key == "n" || key == "esc" {
 				m.confirmOperation, m.confirmID, m.confirmName = "", "", ""
+			}
+			return m, nil
+		}
+		if m.hubEditing {
+			switch key {
+			case "enter":
+				m.hubEditing = false
+				if m.hubQuery == "" {
+					m.hubError = "Type a search term first"
+					m.hubLoaded = true
+					return m, nil
+				}
+				m.hubBusy = true
+				return m, searchHub(m.client, m.hubQuery)
+			case "esc":
+				m.hubEditing = false
+			case "backspace":
+				if len(m.hubQuery) > 0 {
+					_, n := utf8.DecodeLastRuneInString(m.hubQuery)
+					m.hubQuery = m.hubQuery[:len(m.hubQuery)-n]
+				}
+			case "ctrl+u":
+				m.hubQuery = ""
+			default:
+				if len(key) == 1 && len(m.hubQuery) < 80 {
+					m.hubQuery += key
+				}
 			}
 			return m, nil
 		}
@@ -263,48 +410,99 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = true
 		case "tab", "right":
 			m.switchPage((m.page + 1) % len(tabs))
-			if m.page == 5 && !m.mcpLoaded {
-				return m, m.fetchMCP()
-			}
+			return m, m.loadExtraPage()
 		case "shift+tab", "left":
 			m.switchPage((m.page + len(tabs) - 1) % len(tabs))
-			if m.page == 5 && !m.mcpLoaded {
-				return m, m.fetchMCP()
-			}
-		case "1", "2", "3", "4", "5", "6":
+			return m, m.loadExtraPage()
+		case "1", "2", "3", "4", "5", "6", "7", "8":
 			m.switchPage(int(key[0] - '1'))
-			if m.page == 5 && !m.mcpLoaded {
-				return m, m.fetchMCP()
-			}
+			return m, m.loadExtraPage()
 		case "up", "k":
-			m.selected = max(0, m.selected-1)
+			if m.page == 5 && m.showProfiles {
+				m.scroll = max(0, m.scroll-1)
+			} else {
+				m.selected = max(0, m.selected-1)
+			}
 		case "down", "j":
-			m.selected = min(m.rowCount()-1, m.selected+1)
-			m.clampSelection()
+			if m.page == 5 && m.showProfiles {
+				m.scroll++
+			} else {
+				m.selected = min(m.rowCount()-1, m.selected+1)
+				m.clampSelection()
+			}
 		case "pgup":
-			m.selected = max(0, m.selected-10)
+			if m.page == 5 && m.showProfiles {
+				m.scroll = max(0, m.scroll-10)
+			} else {
+				m.selected = max(0, m.selected-10)
+			}
 		case "pgdown":
-			m.selected = min(m.rowCount()-1, m.selected+10)
-			m.clampSelection()
+			if m.page == 5 && m.showProfiles {
+				m.scroll += 10
+			} else {
+				m.selected = min(m.rowCount()-1, m.selected+10)
+				m.clampSelection()
+			}
 		case "home":
 			m.selected = 0
 		case "end":
 			m.selected = max(0, m.rowCount()-1)
 		case "enter":
+			if m.page == 1 && m.selected < len(m.snapshot.Containers) {
+				c := m.snapshot.Containers[m.selected]
+				return m, inspectResource(m.client, "container", c.ID, "INSPECT / "+c.Names)
+			}
+			if m.page == 3 && m.selected < len(m.snapshot.Networks) {
+				n := m.snapshot.Networks[m.selected]
+				return m, inspectResource(m.client, "network", n.Name, "NETWORK / "+n.Name)
+			}
+			if m.page == 4 && m.selected < len(m.snapshot.Volumes) {
+				v := m.snapshot.Volumes[m.selected]
+				return m, inspectResource(m.client, "volume", v.Name, "VOLUME / "+v.Name)
+			}
 			if m.rowCount() > 0 {
 				m.showItem = true
 			}
 		case "r":
 			if m.page == 5 {
+				if m.showProfiles {
+					m.profilesBusy = true
+					return m, loadProfiles(m.client)
+				}
 				return m, m.fetchMCP()
+			}
+			if m.page == 6 {
+				m.composeBusy = true
+				return m, loadCompose(m.client)
+			}
+			if m.page == 7 {
+				if m.hubQuery != "" {
+					m.hubBusy = true
+					return m, searchHub(m.client, m.hubQuery)
+				}
+				return m, nil
 			}
 			if !m.busy {
 				m.busy = true
 				return m, poll(m.client)
 			}
 		case "/":
-			if m.page == 5 {
+			if m.page == 5 && !m.showProfiles {
 				m.editingFilter = true
+			}
+			if m.page == 7 {
+				m.hubEditing = true
+			}
+		case "p":
+			if m.page == 5 {
+				m.showProfiles = !m.showProfiles
+				m.scroll = 0
+				return m, m.loadExtraPage()
+			}
+			if m.page == 7 && !m.hubBusy && m.selected < len(m.hub) && m.hub[m.selected].Name != "" {
+				m.confirmOperation = "pull"
+				m.confirmName = m.hub[m.selected].Name
+				m.confirmID = m.snapshot.Context
 			}
 		case "l":
 			if m.page == 1 && m.selected < len(m.snapshot.Containers) {
@@ -457,11 +655,14 @@ func (m Model) statusLine(w int) string {
 	return muted.Render(plain(label, w))
 }
 func (m Model) navigation(w int) string {
-	if w < 52 {
-		return selectedStyle.Render(fmt.Sprintf(" %d/%d %s ", m.page+1, len(tabs), tabs[m.page])) + muted.Render("  [Tab] next")
+	// Keep navigation within the real terminal width even with eight tabs.
+	if w < 75 {
+		current := fmt.Sprintf(" %d:%s ", m.page+1, shortTabs[m.page])
+		hint := plain("  Tab: next  Shift+Tab: previous  1–8: views", max(0, w-lipgloss.Width(current)))
+		return selectedStyle.Render(current) + muted.Render(hint)
 	}
 	names := tabs
-	if w < 95 {
+	if w < 130 {
 		names = shortTabs
 	}
 	var b strings.Builder
@@ -473,18 +674,30 @@ func (m Model) navigation(w int) string {
 			b.WriteString(muted.Render(item))
 		}
 	}
-	return b.String()
+	return plainStyledNavigation(b.String(), w)
+}
+func plainStyledNavigation(value string, w int) string {
+	if lipgloss.Width(value) <= w {
+		return value
+	}
+	return selectedStyle.Render(" " + plain("Docktop / use 1–8 or Tab to switch", w-2) + " ")
 }
 func (m Model) footer(w int) string {
-	help := "[1–6] Views  [Tab] Next  [↑↓/Pg] Navigate  [Enter] Details  [r] Refresh  [?] Help  [q] Quit"
+	help := "[1–8] Views  [Tab] Next  [↑↓/Pg] Navigate  [Enter] Details  [r] Refresh  [?] Help  [q] Quit"
 	if m.page == 1 {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [↑↓/Pg] Browse  [Enter] Details  [r] Reload  [?] Help  [q] Quit"
+		help = "[/] Search  [p] Profiles  [↑↓/Pg] Browse  [r] Reload  [?] Help  [q] Quit"
+	}
+	if m.page == 6 {
+		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
+	}
+	if m.page == 7 {
+		help = "[/] Search Hub  [p] Pull (confirmation)  [↑↓] Browse  [r] Reload  [q] Quit"
 	}
 	if w < 80 {
-		help = "[1–6] Views  [↑↓] Select  [Enter] Details  [?] Help  [q] Quit"
+		help = "[1–8] Views  [↑↓] Select  [Enter] Details  [?] Help  [q] Quit"
 	}
 	return muted.Render(plain(help, w))
 }
@@ -501,11 +714,13 @@ func (m Model) View() string {
 	switch {
 	case m.showHelp:
 		b.WriteString(frame("KEYBOARD SHORTCUTS", []string{
-			"1–6 / Tab  Switch views     ↑↓ / j k / PgUp PgDn  Select and scroll",
+			"1–8 / Tab  Switch views     ↑↓ / j k / PgUp PgDn  Select and scroll",
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: /  Live local search; Ctrl+U  Clear search; r  Reload catalog",
+			"MCP: /  Live local search; p  Toggle read-only profile list",
+			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
+			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
 			"No MCP servers are started or installed by this application.",
 		}, w, available))
@@ -546,6 +761,17 @@ func (m Model) logLines(limit, width int) []string {
 func (m Model) body(w, h int) string {
 	if m.page == 0 {
 		return m.dashboard(w, h)
+	}
+	if m.page == 5 && m.showProfiles {
+		lines := []string{muted.Render("Read-only MCP profile list  [p] to return to catalog")}
+		if m.profilesBusy {
+			lines = append(lines, "Loading profiles…")
+		} else if m.profilesError != "" {
+			lines = append(lines, wrap("MCP profiles unavailable: "+m.profilesError, w-4, 4)...)
+		} else {
+			lines = append(lines, splitAndScroll(m.profilesText, m.scroll, max(1, h-4), w-4)...)
+		}
+		return frame("MCP PROFILES", lines, w, h)
 	}
 	if w < 82 {
 		return frame(tabs[m.page], m.list(w-4, h-2), w, h)
@@ -621,8 +847,30 @@ func (m Model) list(width, height int) []string {
 	if m.page == 5 {
 		return m.mcpList(width, height)
 	}
+	if m.page == 6 {
+		if m.composeBusy {
+			return []string{"Loading Compose projects…"}
+		}
+		if m.composeError != "" {
+			return wrap("Compose unavailable: "+m.composeError, width, 4)
+		}
+	}
+	if m.page == 7 {
+		if m.hubEditing {
+			return []string{cyan.Render("Search Docker Hub> " + plain(m.hubQuery, width-22) + "_")}
+		}
+		if m.hubBusy {
+			return []string{"Searching Docker Hub…"}
+		}
+		if m.hubError != "" {
+			return wrap("Hub search error: "+m.hubError, width, 4)
+		}
+		if !m.hubLoaded {
+			return []string{"Press / to search Docker Hub (no automatic requests)."}
+		}
+	}
 	if m.rowCount() == 0 {
-		return []string{muted.Render("No resources found (or Docker unavailable).")}
+		return []string{muted.Render("No results found.")}
 	}
 	lines := []string{}
 	nameWidth := max(12, width-22)
@@ -638,6 +886,17 @@ func (m Model) list(width, height int) []string {
 		lines = append(lines, muted.Render(padded("NETWORK", nameWidth)+"  DRIVER"))
 	case 4:
 		lines = append(lines, muted.Render(padded("VOLUME", nameWidth)+"  DRIVER"))
+	case 6:
+		lines = append(lines, muted.Render(padded("COMPOSE PROJECT", nameWidth)+"  STATUS"))
+	case 7:
+		query := m.hubQuery
+		if m.hubEditing {
+			query += "_"
+		}
+		if query == "" {
+			query = "(press / to search)"
+		}
+		lines = append(lines, muted.Render(plain("Search Docker Hub: "+query, width)))
 	}
 	visible := max(1, height-1)
 	start := max(0, m.selected-visible+1)
@@ -674,6 +933,12 @@ func (m Model) list(width, height int) []string {
 		case 4:
 			v := m.snapshot.Volumes[i]
 			line = padded(v.Name, nameWidth) + "  " + plain(v.Driver, 12)
+		case 6:
+			v := m.compose[i]
+			line = padded(v.Name, nameWidth) + "  " + plain(v.Status, 12)
+		case 7:
+			v := m.hub[i]
+			line = padded(v.Name, nameWidth) + "  " + plain(fmt.Sprintf("★%d", v.StarCount), 12)
 		}
 		lines = append(lines, m.formatRow(i, line, width))
 	}
@@ -753,6 +1018,18 @@ func (m Model) details(width int) []string {
 		}
 		v := m.snapshot.Volumes[m.selected]
 		entries = [][2]string{{"VOLUME NAME", v.Name}, {"DRIVER", v.Driver}, {"MOUNTPOINT", v.Mountpoint}}
+	case 6:
+		if m.selected >= len(m.compose) {
+			return []string{"No Compose projects discovered."}
+		}
+		v := m.compose[m.selected]
+		entries = [][2]string{{"PROJECT", v.Name}, {"STATUS", v.Status}, {"CONFIG FILES", v.ConfigFiles}}
+	case 7:
+		if m.selected >= len(m.hub) {
+			return []string{"Press / to search Docker Hub."}
+		}
+		v := m.hub[m.selected]
+		entries = [][2]string{{"IMAGE", v.Name}, {"DESCRIPTION", v.Description}, {"STARS", fmt.Sprint(v.StarCount)}, {"OFFICIAL", fmt.Sprint(v.Official)}}
 	case 5:
 		servers := m.filteredServers()
 		if m.selected >= len(servers) {
@@ -775,7 +1052,23 @@ func (m Model) details(width int) []string {
 		lines = append(lines, muted.Render("State changes require y confirmation."))
 	}
 	if m.page == 5 {
-		lines = append(lines, muted.Render("Catalog listing only. No MCP server is executed."))
+		lines = append(lines, muted.Render("Catalog listing only. No MCP server executed."))
+	}
+	if m.page == 7 {
+		lines = append(lines, muted.Render("Press p to request pull; requires y confirmation."))
 	}
 	return lines
+}
+
+func splitAndScroll(raw string, offset, maxLines, width int) []string {
+	lines := strings.Split(dockercli.Clean(raw, 12000), "\n")
+	if len(lines) == 0 {
+		return []string{"(none)"}
+	}
+	offset = min(max(0, offset), max(0, len(lines)-maxLines))
+	out := []string{}
+	for _, line := range lines[offset:min(len(lines), offset+maxLines)] {
+		out = append(out, plain(line, width))
+	}
+	return out
 }

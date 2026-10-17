@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.2)
+## What works (v0.3)
 
 - Full-screen, responsive two-panel interface with keyboard navigation, item details, and scrollable lists.
 - Docker containers, images, networks, and volumes, with full identifiers and metadata in the details panel.
@@ -14,7 +14,15 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 - Read-only MCP catalog browser with client-side search of server names, titles, and descriptions, and a detail pane showing descriptions, tool counts, image/endpoint information.
 - Responsive single-panel mode for narrow terminals. No Docker Desktop or web interface required.
 
-Not yet implemented: Compose operations, image pulls, container creation, MCP activation/installation, full per-container metric plots, and benchmarks against alternative Docker tools.
+New in v0.3:
+
+- **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths; requires Docker Compose CLI plugin.
+- **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
+- **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
+- **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of configured profiles; no activation, credential access or server execution.
+- **Measurement helper**: `scripts/measure-process.sh PID` reads the RSS and process-lifetime CPU average of an already running Docktop process. Does not measure Docker containers, and does not claim a comparative benchmark.
+
+Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools.
 
 ## Requirements
 
@@ -44,15 +52,16 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 
 | Key | Function |
 | --- | --- |
-| `1`–`6`, `Tab` / `Shift+Tab` | Switch dashboard, containers, images, networks, volumes and MCP |
+| `1`–`8`, `Tab` / `Shift+Tab` | Switch Dashboard, Containers, Images, Networks, Volumes, MCP, Compose and Hub |
 | `↑`/`↓` or `j`/`k`, `PgUp`/`PgDn`, `Home`/`End` | Navigate lists and logs |
-| `Enter` | Open selected item details (useful in narrow terminals) |
+| `Enter` | Show details; on Containers, Networks and Volumes requests an additional read-only inspection |
 | `r` | Refresh Docker view or reload MCP catalog |
 | `l` | Show last 100 log lines for selected container (Containers tab) |
 | `s` | Start or stop selected container, with explicit confirmation |
 | `R` | Restart selected container, with explicit confirmation |
 | `y` / `n` | Confirm or cancel a state change |
-| `/` | Search MCP names, titles and descriptions; `Ctrl+U` clears the query |
+| `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
+| `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
 | `?` | Show help; `Esc` closes prompts or details |
 | `q`, `Ctrl+C` | Exit |
 
@@ -66,11 +75,21 @@ docker mcp catalog pull mcp/docker-mcp-catalog:latest
 ## Design and security
 
 - Docker CLI arguments are passed directly without a shell. The active Docker context and Docker permissions are honored.
-- Read-only discovery is the default. Container state changes use validated IDs and ask for a `y` confirmation.
+- Read-only discovery is the default. Container state changes use validated IDs and ask for a `y` confirmation. Image pulls use validated Docker Hub image names, pin the Docker context captured during review and require the same `y` confirmation.
 - No telemetry, credential storage, background Docktop daemon, socket forwarding, or MCP execution.
 - External text is sanitized; CLI commands are timeout-limited, logs are bounded, and metric history is capped to 60 samples.
 - **Docker daemon access is highly privileged.** Do not run Docktop as root or mount the Docker socket into untrusted workloads. Confirmation prompts are guardrails, not an OS security boundary.
 - Docker resource metrics are sourced from `docker stats` and do not represent whole-host CPU or RAM usage.
+
+## Measure Docktop process overhead
+
+After building (`go build -o docktop ./cmd/docktop`), launch `./docktop` in a terminal. In a second terminal, identify its PID with `pgrep -a -x docktop` and run:
+
+```bash
+./scripts/measure-process.sh <PID>
+```
+
+The script takes three samples, two seconds apart, using `/proc` and `ps`. RSS reflects Docktop's process memory, **not** the container workloads. CPU shown by `ps` is the process-lifetime average, not a point-in-time idle benchmark. Compare against other tools only with equivalent terminal sizes, refresh settings, loaded resources, and measurement methods.
 
 ## Development
 
