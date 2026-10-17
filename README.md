@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.13 MCP management hardening)
+## What works (v0.14 reviewed MCP client connection)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -25,7 +25,7 @@ Also supported since v0.3:
 - **Full tool descriptions:** Bounded 4-KiB sanitized descriptions, dedicated right-panel focus (`Tab`) and line/page scrolling (`↑↓`, `PgUp/PgDn`), without fetching live MCP data while navigating.
 - **Harder concurrent-change checks:** Before each staged permission write, Docktop rereads and compares the whole profile tool policy (not just the selected tool) and rechecks membership. It blocks stale plans or unexpected changes; Docker MCP has no compare-and-swap guarantee, so external races remain possible.
 - **Explicit failure accounting:** Plan results distinguish blocked/no write attempted, previously verified partial execution, and an attempted write whose outcome cannot be verified. Never claim an atomic batch or automatic rollback.
-- **Configured MCP clients** (`6`, then `i`): read-only view of local client integration configuration from `docker mcp client ls --global --json`. It shows only client name, profile label and configuration status, never raw client commands, credentials or config. This is **not** a live connection monitor.
+- **Configured MCP clients** (`6`, then `i`): local client integrations from `docker mcp client ls --global --json`, with search (`/`), installation/OS-support status and configuration state, excluding raw client commands, credentials and config. **Not live connection telemetry**. For a confirmed installed and supported unconfigured client, press `c`, choose an existing MCP profile, review the exact `docker mcp client connect --global --profile <id> --quiet <client>` command, and press `y` to approve. The client is reread after connection; only the exact matching client/profile is reported verified. Errors after write dispatch are **unverified**, not assumed failures or successes. The workflow does not silently overwrite existing Docker MCP client connections and never runs a gateway or tools.
 - **Staged MCP permission plans:** Use `Space` on a tool to stage its opposite permission, up to 12 named tools. `v` previews exact changes before `y` authorizes sequential Docker MCP operations. Each tool is rechecked and read back before the next write. There is **no transaction/rollback**; a partial failure reports verified earlier steps and warns about uncertain attempted steps. `c` clears the plan; read-only browsing never writes.
 - **Searchable MCP Tool Explorer:** Search by tool name or description with `/`, filter by annotation group using `g`, and view enabled/disabled counts. A responsive two-panel layout separates permission state, capability hints, and tool descriptions. Classifications use provider-supplied annotations only; unannotated tools stay **unspecified**, never implicitly safe.
 - **Post-change verification:** After approved individual-tool edits or server removal, Docktop reads Docker MCP state again. It reports **verified** only after confirming the target state; if Docker reports success but state cannot be confirmed, Docktop displays an **unverified** warning and requires a fresh inspection. Changes to unrelated tool states are flagged.
@@ -37,7 +37,7 @@ Also supported since v0.3:
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
-Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
+Not yet implemented: Compose management operations, container creation, advanced image management, live MCP session telemetry or automatic MCP client installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
 
 ### Local host metrics (Linux only)
 
@@ -84,6 +84,7 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 | `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
 | `a` | MCP tab: toggle configured servers across profiles (read-only); close an inspection with `Esc` first |
+| `i` | MCP tab: show configured client integrations. Press `/` to search and `c` on an eligible client to choose a profile, review, then `y` to connect; `n/Esc` cancels without editing configuration. |
 | `Shift+A` | MCP Catalog: request adding selected catalog server to an existing profile. Select profile, review exact reference, then `y` to approve or `n/Esc` to cancel. |
 | `m` | MCP tab: open profile tool-permission manager. Inside a selected profile, use `t` for individual tool inspection/permission controls or `x` to request removing one server; both changes require confirmation. Use `c` to create a new empty profile (review + `y` confirmation), or select an existing profile with Enter, choose server, `e` enable all tools / `d` disable all tools, `y` confirm or `n` cancel. `Esc` backs out. |
 | `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution); `Esc` returns to the catalog |

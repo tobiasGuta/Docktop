@@ -251,6 +251,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case clientProfilesLoadedMsg:
+		m=m.clientProfilesResult(v)
+	case clientConnectDoneMsg:
+		m=m.clientConnectedResult(v)
 	case configuredClientsMsg:
 		m=m.configuredClientResult(v)
 	case mcpPlanDoneMsg:
@@ -981,7 +985,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; Shift+A add to profile; i configured clients (read-only)",
+			"MCP: / Search; Enter inspect; Shift+A add to profile; i configured clients / reviewed connection",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
