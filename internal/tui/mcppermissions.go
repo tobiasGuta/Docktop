@@ -159,8 +159,13 @@ func (m Model) permissionView(w,h int)string {
 	case "unverified":
 		headline:="WRITE SUCCEEDED; RESULT NOT VERIFIED"
 		if p.operation=="permission plan" {headline="TOOL WRITE OUTCOME NOT VERIFIED"}
-		lines=append(lines,amber.Render(headline),p.batchReport,
-			"Docker reported success but readback was incomplete or inconsistent.")
+		lines=append(lines,amber.Render(headline),p.batchReport)
+		if p.operation=="permission plan" {
+			lines=append(lines,"A tool write was attempted. Docker might have applied it",
+				"even if the CLI returned an error. No outcome is assumed.")
+		} else {
+			lines=append(lines,"Docker reported success but readback was incomplete or inconsistent.")
+		}
 		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-12))...)
 		lines=append(lines,"Inspect again before attempting another permission change.")
 	case "complete":
