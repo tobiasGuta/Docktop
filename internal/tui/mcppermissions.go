@@ -22,6 +22,10 @@ type permissionOverlay struct {
 	selected int // index within filtered tools, not the unfiltered snapshot
 	filter, group string
 	editingFilter bool
+	detailFocus bool
+	detailScroll int
+	staged map[string]bool
+	batchReport string
 }
 type permissionsLoadedMsg struct {
 	profile,server string
@@ -120,22 +124,29 @@ func (m Model) permissionFooter()string {
 	case "loading","saving":return "[Wait] MCP read / approval operation in progress"
 	case "tools":
 		if p.editingFilter{return "[Enter] Apply search  [Esc] Done  [Ctrl+U] Clear"}
-		return "[Esc] Back  [/] Search  [g] Group  [↑↓] Tool  [e/d] One tool  [r] Refresh"
-	case "review-tool","review-remove":return "[y] Confirm exact change  [n/Esc] Cancel"
+		if p.detailFocus{return "[Tab] Tools  [↑↓/Pg] Scroll description  [Esc] Back"}
+		return "[Esc] Back  [/] Search  [g] Group  [↑↓] Tool  [Tab] Details  [Space] Stage  [v] Review"
+	case "review-tool","review-remove","review-plan":return "[y] Confirm exact change  [n/Esc] Cancel"
 	case "complete":return "[Esc/Enter] Back  •  change verified by Docker readback"
-	case "unverified":return "[Esc/Enter] Back  •  write succeeded; verification incomplete"
+	case "unverified","partial":return "[Esc/Enter] Back  •  changes may be partial / unverified"
 	default:return "[Esc/Enter] Return to profile manager"
 	}
 }
 func (m Model) permissionView(w,h int)string {
 	p:=m.perm
 	if p.phase=="tools" {return m.permissionBrowse(w,h)}
+	if p.phase=="review-plan" {return m.permissionPlanView(w,h)}
 	lines:=[]string{cyan.Render("PROFILE  "+plain(p.profile,max(1,w-12))),"SERVER   "+plain(p.server,max(1,w-11)),""}
 	switch p.phase{
 	case "loading":
 		lines=append(lines,muted.Render("Reading profile tool policy (secret fields omitted)..."))
 	case "saving":
 		lines=append(lines,amber.Render("Applying the approved change and verifying the result..."))
+	case "partial":
+		lines=append(lines,amber.Render("STAGED PLAN DID NOT FULLY COMPLETE"),p.batchReport,
+			"Verified steps are NOT automatically undone.")
+		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-13))...)
+		lines=append(lines,"Inspect the profile again before further permission changes.")
 	case "error":
 		lines=append(lines,red.Render("DOCKER MCP OPERATION RETURNED ERROR"))
 		lines=append(lines,wrap(p.errText,max(1,w-4),max(1,h-9))...)
@@ -148,6 +159,7 @@ func (m Model) permissionView(w,h int)string {
 	case "complete":
 		lines=append(lines,green.Render("CHANGE VERIFIED BY DOCKER READBACK"),"",
 			"OPERATION  "+p.operation,"SERVER     "+p.server)
+		if p.batchReport!=""{lines=append(lines,green.Render(plain(p.batchReport,max(1,w-4))))}
 		if p.tool!=""{lines=append(lines,"TOOL       "+p.tool)}
 		lines=append(lines,"","Refresh or reopen the inspector to view the updated permissions.")
 	case "review-tool","review-remove":
@@ -171,78 +183,29 @@ func (m Model) permissionView(w,h int)string {
 	}
 	return frame("MCP SERVER PERMISSIONS / "+p.phase,lines,w,h)
 }
-func (m Model) permissionBrowse(w,h int)string {
-	p:=m.perm
-	all:=p.view.Tools
-	visible:=p.visibleTools()
-	enabled,disabled:=0,0
-	for _,tool:=range all{
-		if tool.Status=="enabled"{enabled++}else if tool.Status=="disabled"{disabled++}
-	}
-	group:=p.group
-	if group==""{group="all"}
-	list:=[]string{
-		cyan.Render(plain("PROFILE "+p.profile+"  /  "+p.server,max(1,w-4))),"",
-		fmt.Sprintf("TOTAL %d  EN %d  DIS %d",len(all),enabled,disabled),
-		muted.Render(plain("POLICY "+p.view.Mode+"   GROUP "+group,max(1,w-4))),
-		muted.Render(plain("SEARCH "+searchLabel(p.filter,p.editingFilter),max(1,w-4))),
-	}
-	if p.view.Mode=="unknown"{
-		list=append(list,amber.Render("UNKNOWN permissions: modifications blocked."))
-	}
-	list=append(list,"")
-	if len(visible)==0{
-		list=append(list,muted.Render("No tools match the search/group (or snapshot is empty)."))
-	}
-	limit:=max(1,h-11)
-	start:=max(0,p.selected-limit+1)
-	if p.selected<limit{start=0}
-	for i:=start;i<len(visible)&&i<start+limit;i++ {
-		t:=visible[i]
-		row:=t.Name+"  ["+t.Status+"]"
-		if i==p.selected {
-			list=append(list,selectedStyle.Render(padded("> "+plain(row,max(1,w/2-7)),max(1,w/2-5))))
-		}else{
-			list=append(list,"  "+plain(row,max(1,w/2-7)))
-		}
-	}
-	list=append(list,"",muted.Render("Annotations are hints, not enforced safety guarantees."))
-	tool,ok:=p.chosenTool()
-	side:=[]string{cyan.Render("PROFILE TOOL ACCESS"),"",
-		"PROFILE    "+plain(p.profile,max(1,w/2-17)),
-		"SERVER     "+plain(p.server,max(1,w/2-17)),
-		"POLICY     "+p.view.Mode,"",
-	}
-	if ok{
-		hint:=tool.CapabilityHint
-		if hint==""{hint="unspecified"}
-		side=append(side,cyan.Render("SELECTED TOOL"),plain(tool.Name,max(1,w/2-5)),"",
-			"PERMISSION  "+tool.Status,"CAPABILITY  "+hint)
-		if hint=="unspecified"{
-			side=append(side,amber.Render("No explicit capability annotation supplied."))
-		}else{
-			side=append(side,muted.Render("Provider-supplied MCP capability hint; not proof of safety."))
-		}
-		side=append(side,"",cyan.Render("DESCRIPTION"))
-		side=append(side,wrap(tool.Description,max(1,w/2-6),max(1,h-21))...)
-	}else{
-		side=append(side,muted.Render("Select a tool after adjusting search/group."))
-	}
-	side=append(side,"",muted.Render("Source: stored profile snapshot. No gateway was started."))
-	if w<88||h<17{
-		compact:=append([]string{},list...)
-		compact=append(compact,"")
-		compact=append(compact,side...)
-		return frame("MCP TOOL EXPLORER",compact,w,h)
-	}
-	left:=max(42,w*54/100)
-	right:=w-left-1
-	// Re-render the highlighted row for the actual left-panel width.
-	list=m.permissionListForWidth(p,left,h)
-	side=m.permissionDetailForWidth(p,right,h)
-	return lipgloss.JoinHorizontal(lipgloss.Top,frame("TOOLS  /  "+fmt.Sprint(len(visible))+" MATCHED",list,left,h)," ",
-		frame("POLICY / TOOL DETAILS",side,right,h))
+func (m Model) permissionBrowse(w,h int)string{
+ p:=m.perm
+ if w<88||h<17 {
+  compact:=m.permissionListForWidth(p,w,h)
+  compact=append(compact,"",cyan.Render("TOOL DESCRIPTION (use wider terminal for scrolling)"))
+  tool,ok:=p.chosenTool()
+  if ok {
+   compact=append(compact,plain(tool.Name,max(1,w-4)))
+   desc:=wrap(tool.Description,max(1,w-4),200)
+   visible:=max(0,h-len(compact)-3)
+   compact=append(compact,trimLines(desc,visible)...)
+  }
+  return frame("MCP TOOL EXPLORER",compact,w,h)
+ }
+ left:=max(42,w*54/100)
+ right:=w-left-1
+ list:=m.permissionListForWidth(p,left,h)
+ side:=m.permissionDetailForWidth(p,right,h)
+ return lipgloss.JoinHorizontal(lipgloss.Top,
+  frame("TOOLS  /  "+fmt.Sprint(len(p.visibleTools()))+" MATCHED",list,left,h)," ",
+  frame("POLICY / TOOL DETAILS",side,right,h))
 }
+
 func searchLabel(filter string, editing bool) string {
 	if filter=="" {
 		if editing{return "_"}
@@ -251,121 +214,182 @@ func searchLabel(filter string, editing bool) string {
 	if editing{return filter+"_"}
 	return filter
 }
-func (m Model) permissionListForWidth(p permissionOverlay,w,h int)[]string {
-	visible:=p.visibleTools()
-	en,dis:=0,0
-	for _,t:=range p.view.Tools {
-		if t.Status=="enabled"{en++}else if t.Status=="disabled"{dis++}
-	}
-	group:=p.group
-	if group==""{group="all"}
-	out:=[]string{cyan.Render(plain("PROFILE  "+p.profile,max(1,w-4))),
-		fmt.Sprintf("TOTAL %d  EN %d  DIS %d",len(p.view.Tools),en,dis),
-		muted.Render(plain("GROUP  "+group+"  [g] cycle",max(1,w-4))),
-		muted.Render(plain("SEARCH  "+searchLabel(p.filter,p.editingFilter),max(1,w-4))),""}
-	if p.view.Mode=="unknown"{out=append(out,amber.Render("Unknown policy; write controls unavailable."))}
-	if len(visible)==0{out=append(out,muted.Render("No matching tools."))}
-	capacity:=max(1,h-len(out)-3)
-	start:=max(0,p.selected-capacity+1)
-	for i:=start;i<len(visible)&&i<start+capacity;i++{
-		tool:=visible[i]
-		hint:=tool.CapabilityHint
-		if hint==""{hint="unspecified"}
-		row:=tool.Name+"  ["+tool.Status+"]"
-		if i==p.selected {out=append(out,selectedStyle.Render(padded("> "+plain(row,max(1,w-4)),max(1,w-2))))} else {
-			out=append(out,"  "+plain(row,max(1,w-5)))
-		}
-	}
-	return out
+func (m Model) permissionListForWidth(p permissionOverlay,w,h int)[]string{
+ visible:=p.visibleTools()
+ en,dis:=0,0
+ ro,des,other,unspec:=0,0,0,0
+ for _,t:=range p.view.Tools {
+  if t.Status=="enabled"{en++}else if t.Status=="disabled"{dis++}
+  switch t.CapabilityHint{
+  case "read-only":ro++
+  case "destructive":des++
+  case "other":other++
+  default:unspec++
+  }
+ }
+ group:=p.group
+ if group==""{group="all"}
+ out:=[]string{cyan.Render(plain("PROFILE  "+p.profile,max(1,w-4))),
+  fmt.Sprintf("TOTAL %d  EN %d  DIS %d",len(p.view.Tools),en,dis),
+  muted.Render(plain(fmt.Sprintf("HINTS RO %d  DESTR %d  OTHER %d  UNKNOWN %d",ro,des,other,unspec),max(1,w-4))),
+  muted.Render(plain("GROUP  "+group+"  [g] cycle",max(1,w-4))),
+  muted.Render(plain("SEARCH  "+searchLabel(p.filter,p.editingFilter),max(1,w-4))),
+  muted.Render(plain(fmt.Sprintf("STAGED %d/12  [Space] toggle  [v] review  [c] clear",len(p.staged)),max(1,w-4))),""}
+ if p.view.Mode=="unknown"{out=append(out,amber.Render("Unknown policy; write controls unavailable."))}
+ if len(visible)==0{out=append(out,muted.Render("No matching tools."))}
+ capacity:=max(1,h-len(out)-3)
+ start:=max(0,p.selected-capacity+1)
+ if p.selected<capacity{start=0}
+ for i:=start;i<len(visible)&&i<start+capacity;i++{
+  tool:=visible[i]
+  label:="[DISABLED]"
+  style:=red
+  if tool.Status=="enabled"{label="[ENABLED]";style=green}
+  mark:=" "
+  if enabled,ok:=p.staged[tool.Name];ok {
+   if enabled {mark="+"}else{mark="-"}
+  }
+  room:=max(1,w-8-lipgloss.Width(label))
+  name:=plain(tool.Name,room)
+  if i==p.selected{
+   out=append(out,selectedStyle.Render(padded("> "+mark+" "+name+" "+label,max(1,w-2))))
+  }else{
+   out=append(out," "+mark+" "+name+" "+style.Render(label))
+  }
+ }
+ return out
 }
-func (m Model) permissionDetailForWidth(p permissionOverlay,w,h int)[]string {
-	tool,ok:=p.chosenTool()
-	out:=[]string{cyan.Render("PERMISSION SUMMARY"),"",
-		"PROFILE "+plain(p.profile,max(1,w-12)),
-		"SERVER  "+plain(p.server,max(1,w-12)),
-		"MODE    "+p.view.Mode,""}
-	if !ok{return append(out,muted.Render("Select a matching tool in the left panel."))}
-	hint:=tool.CapabilityHint
-	if hint==""{hint="unspecified"}
-	out=append(out,cyan.Render("SELECTED TOOL"),plain(tool.Name,max(1,w-4)),"",
-		"PERMISSION  "+tool.Status,"CAPABILITY  "+hint,"")
-	switch hint{
-	case "unspecified":
-		out=append(out,amber.Render("No explicit capability hint provided."))
-	default:
-		out=append(out,muted.Render("Provider-declared hint, not proof of safety."))
-	}
-	out=append(out,"",cyan.Render("DESCRIPTION"))
-	out=append(out,wrap(tool.Description,max(1,w-4),max(1,h-17))...)
-	out=append(out,"",muted.Render("Profile snapshot; no live MCP gateway calls."))
-	return out
+
+func (m Model) permissionDetailForWidth(p permissionOverlay,w,h int)[]string{
+ tool,ok:=p.chosenTool()
+ out:=[]string{cyan.Render("PERMISSION SUMMARY"),"",
+  "PROFILE "+plain(p.profile,max(1,w-12)),
+  "SERVER  "+plain(p.server,max(1,w-12)),
+  "MODE    "+p.view.Mode,""}
+ if !ok{return append(out,muted.Render("Select a matching tool in the left panel."))}
+ hint:=tool.CapabilityHint
+ if hint==""{hint="unspecified"}
+ out=append(out,cyan.Render("SELECTED TOOL"),plain(tool.Name,max(1,w-4)),"")
+ status:=red.Render(tool.Status)
+ if tool.Status=="enabled"{status=green.Render(tool.Status)}
+ out=append(out,"PERMISSION  "+status,"CAPABILITY  "+hint,"")
+ if hint=="unspecified"{
+  out=append(out,amber.Render("No explicit capability hint provided."))
+ }else{
+  out=append(out,muted.Render("Provider-declared hint, not proof of safety."))
+ }
+ if enable,staged:=p.staged[tool.Name];staged{
+  desired:="disabled";if enable{desired="enabled"}
+  out=append(out,amber.Render("STAGED CHANGE: "+tool.Status+" -> "+desired))
+ }
+ out=append(out,"",cyan.Render("DESCRIPTION  [Tab] focus  [↑↓/Pg] scroll"))
+ desc:=wrap(tool.Description,max(1,w-4),1024)
+ capacity:=max(1,h-len(out)-6)
+ scroll:=min(max(0,p.detailScroll),max(0,len(desc)-capacity))
+ if len(desc)==0{desc=[]string{"(no description supplied)"}}
+ end:=min(len(desc),scroll+capacity)
+ if scroll<len(desc){out=append(out,desc[scroll:end]...)}
+ out=append(out,muted.Render(fmt.Sprintf("Lines %d-%d/%d  %s",min(scroll+1,len(desc)),end,len(desc),map[bool]string{true:"DETAILS FOCUSED",false:"Tab to scroll"}[p.detailFocus])),
+  "",muted.Render("Snapshot only. No MCP gateway calls."))
+ return out
 }
+
 func (m Model) permissionKey(key string)(tea.Model,tea.Cmd){
-	p:=&m.perm
-	if p.phase=="loading"||p.phase=="saving"{return m,nil}
-	switch p.phase{
-	case "tools":
-		if p.editingFilter {
-			switch key{
-			case "enter","esc":p.editingFilter=false
-			case "backspace":
-				if len(p.filter)>0 {p.filter=p.filter[:len(p.filter)-1]}
-			case "ctrl+u":p.filter=""
-			default:
-				if len(key)==1 && len(p.filter)<80 {p.filter+=key}
-			}
-			p.selected=0
-			return m,nil
-		}
-		switch key{
-		case "esc","q":m.perm=permissionOverlay{}
-		case "/":p.editingFilter=true
-		case "g":
-			pos:=0
-			for i,group:=range permissionGroups{if group==p.group{pos=i;break}}
-			p.group=permissionGroups[(pos+1)%len(permissionGroups)]
-			p.selected=0
-		case "up","k":p.selected=max(0,p.selected-1)
-		case "down","j":p.selected=min(max(0,len(p.visibleTools())-1),p.selected+1)
-		case "pgup":p.selected=max(0,p.selected-10)
-		case "pgdown":p.selected=min(max(0,len(p.visibleTools())-1),p.selected+10)
-		case "r":p.phase="loading";p.editingFilter=false;return m,loadPermissions(m.client,p.profile,p.server)
-		case "e","d":
-			if p.view.Mode=="unknown"{return m,nil}
-			tool,ok:=p.chosenTool()
-			if !ok{return m,nil}
-			requested:="enable"
-			if key=="d"{requested="disable"}
-			if (requested=="enable"&&tool.Status=="enabled")||(requested=="disable"&&tool.Status=="disabled"){return m,nil}
-			p.operation=requested;p.tool=tool.Name;p.phase="review-tool"
-		}
-	case "review-tool","review-remove":
-		switch key{
-		case "n","esc":
-			if p.phase=="review-tool"{p.phase="tools";p.operation="";p.tool=""}else{m.perm=permissionOverlay{}}
-		case "y","Y":
-			p.phase="saving"
-			return m,applyMCPPermission(m.client,p.profile,p.server,p.tool,p.operation,p.view)
-		}
-	case "complete","unverified","error":
-		switch key{
-		case "esc","q","enter":
-			profile:=p.profile
-			m.perm=permissionOverlay{}
-			if m.pm.open&&m.pm.stage==1&&m.pm.profileID==profile{
-				m.pm.serverBusy=true
-				return m,fetchManagerServers(m.client,profile)
-			}
-		}
-	}
-	return m,nil
+ p:=&m.perm
+ if p.phase=="loading"||p.phase=="saving"{return m,nil}
+ if p.phase=="review-plan" {return m.handlePlanKey(key)}
+ switch p.phase{
+ case "tools":
+  if p.editingFilter{
+   switch key{
+   case "enter","esc":p.editingFilter=false
+   case "backspace":if len(p.filter)>0{p.filter=p.filter[:len(p.filter)-1]}
+   case "ctrl+u":p.filter=""
+   default:if len(key)==1&&len(p.filter)<80{p.filter+=key}
+   }
+   p.selected=0;p.detailScroll=0
+   return m,nil
+  }
+  if key=="tab"||key=="shift+tab"{
+   p.detailFocus=!p.detailFocus
+   return m,nil
+  }
+  if p.detailFocus {
+   tool,ok:=p.chosenTool()
+   if !ok {p.detailFocus=false;return m,nil}
+   width:=max(1,m.width-m.width*54/100-7)
+   description:=wrap(tool.Description,width,1024)
+   visible:=max(1,m.height-23)
+   ceiling:=max(0,len(description)-visible)
+   switch key {
+   case "up","k":p.detailScroll=max(0,p.detailScroll-1)
+   case "down","j":p.detailScroll=min(ceiling,p.detailScroll+1)
+   case "pgup":p.detailScroll=max(0,p.detailScroll-visible)
+   case "pgdown":p.detailScroll=min(ceiling,p.detailScroll+visible)
+   case "home":p.detailScroll=0
+   case "end":p.detailScroll=ceiling
+   case "esc":p.detailFocus=false
+   }
+   return m,nil
+  }
+  switch key {
+  case "esc","q":m.perm=permissionOverlay{}
+  case "/":p.editingFilter=true
+  case "g":
+   pos:=0
+   for i,group:=range permissionGroups{if group==p.group{pos=i;break}}
+   p.group=permissionGroups[(pos+1)%len(permissionGroups)]
+   p.selected=0;p.detailScroll=0
+  case "up","k":p.selected=max(0,p.selected-1);p.detailScroll=0
+  case "down","j":p.selected=min(max(0,len(p.visibleTools())-1),p.selected+1);p.detailScroll=0
+  case "pgup":p.selected=max(0,p.selected-10);p.detailScroll=0
+  case "pgdown":p.selected=min(max(0,len(p.visibleTools())-1),p.selected+10);p.detailScroll=0
+  case "r":
+   p.phase="loading";p.editingFilter=false;p.staged=nil;p.detailScroll=0
+   return m,loadPermissions(m.client,p.profile,p.server)
+  case "space":
+   p.stageSelected()
+  case "c":
+   p.staged=nil
+  case "v":
+   if len(p.staged)>0&&len(p.staged)<=12&&p.view.Mode!="unknown"{p.phase="review-plan"}
+  case "e","d":
+   if p.view.Mode=="unknown"||len(p.staged)>0{return m,nil}
+   tool,ok:=p.chosenTool()
+   if !ok{return m,nil}
+   requested:="enable"
+   if key=="d"{requested="disable"}
+   if (requested=="enable"&&tool.Status=="enabled")||(requested=="disable"&&tool.Status=="disabled"){return m,nil}
+   p.operation=requested;p.tool=tool.Name;p.phase="review-tool"
+  }
+ case "review-tool","review-remove":
+  switch key{
+  case "n","esc":
+   if p.phase=="review-tool"{p.phase="tools";p.operation="";p.tool=""}else{m.perm=permissionOverlay{}}
+  case "y","Y":
+   p.phase="saving"
+   return m,applyMCPPermission(m.client,p.profile,p.server,p.tool,p.operation,p.view)
+  }
+ case "complete","unverified","partial","error":
+  switch key{
+  case "esc","q","enter":
+   profile:=p.profile
+   m.perm=permissionOverlay{}
+   if m.pm.open&&m.pm.stage==1&&m.pm.profileID==profile{
+    m.pm.serverBusy=true
+    return m,fetchManagerServers(m.client,profile)
+   }
+  }
+ }
+ return m,nil
 }
+
 func (m Model) permissionResult(v permissionsLoadedMsg)Model{
 	p:=&m.perm
 	if !p.open||p.phase!="loading"||p.profile!=v.profile||p.server!=v.server{return m}
 	if v.err!=nil{p.phase="error";p.errText=v.err.Error()}else{
 		// Refresh keeps a local search but never reuses a stale tool selection.
-		p.view=v.data;p.selected=0;p.phase="tools"
+		p.view=v.data;p.selected=0;p.detailScroll=0;p.staged=nil;p.phase="tools"
 	}
 	return m
 }
