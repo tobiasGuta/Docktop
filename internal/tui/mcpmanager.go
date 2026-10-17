@@ -51,10 +51,14 @@ func (m Model) managerView(w,h int) string {
 	items:=[]string{}
 	side:=[]string{}
 	if p.errText!="" {
-		side=append(side,red.Render("MCP data unavailable"),wrap(p.errText,max(15,w/2-6),3)...,"")
+		side=append(side,red.Render("MCP data unavailable"))
+		side=append(side,wrap(p.errText,max(15,w/2-6),3)...)
+		side=append(side,"")
 	}
 	if p.notice!="" {
-		side=append(side,green.Render("LAST ACTION"),wrap(p.notice,max(15,w/2-6),3)...,"")
+		side=append(side,green.Render("LAST ACTION"))
+		side=append(side,wrap(p.notice,max(15,w/2-6),3)...)
+		side=append(side,"")
 	}
 	if p.stage==0 {
 		items=append(items,cyan.Render(fmt.Sprintf("SELECT PROFILE  /  %d available",len(p.profiles))),"")
