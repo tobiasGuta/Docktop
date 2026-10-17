@@ -101,3 +101,46 @@ func TestProfileToggle(t *testing.T) {
 		t.Fatal("profile view not toggled")
 	}
 }
+
+func TestBtopDashboardResponsiveAndBounded(t *testing.T) {
+	for _, dim := range [][2]int{{172, 52}, {120, 35}, {90, 23}, {89, 23}, {50, 16}, {30, 10}} {
+		m := testModel()
+		m.width = dim[0]
+		m.height = dim[1]
+		m.cpuHistory = []float64{2.5, 8.2, 3.4, 11.7, 19.0}
+		m.memHistory = []float64{15, 16, 15.5, 20}
+		rendered := m.View()
+		if !strings.Contains(rendered, "DOCKTOP") {
+			t.Fatalf("no header at %v", dim)
+		}
+		for i, line := range strings.Split(rendered, "\n") {
+			if lipgloss.Width(line) > dim[0] {
+				t.Errorf("size %v line %d too wide: %d", dim, i, lipgloss.Width(line))
+			}
+		}
+		if lipgloss.Height(rendered) > dim[1] {
+			t.Errorf("size %v too tall: %d", dim, lipgloss.Height(rendered))
+		}
+	}
+}
+func TestHistoryScaleKeepsTruePeak(t *testing.T) {
+	if niceScale(275, 10) < 275 {
+		t.Fatal("clipped multicore CPU")
+	}
+	if niceScale(4.7, 10) != 10 {
+		t.Fatal("low workload should have readable scaling")
+	}
+	graph := plotHistory([]float64{0, 1, 7, 14}, 44, 8, 10, green)
+	if len(graph) != 8 || !strings.Contains(graph[0], "20.0") {
+		t.Fatalf("unexpected graph %v", graph)
+	}
+	if strings.Join(graph, "") == "" {
+		t.Fatal("empty plot")
+	}
+}
+func TestIOCountersAreNotRates(t *testing.T) {
+	in, out := ioPair("1.1MB / 500kB")
+	if in != 1.1e6 || out != 500e3 {
+		t.Fatalf("I/O parsing: %f %f", in, out)
+	}
+}

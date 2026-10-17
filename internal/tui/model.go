@@ -26,6 +26,7 @@ var (
 	red           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24"))
 	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color("61"))
+	surface       = lipgloss.NewStyle().Background(lipgloss.Color("235"))
 )
 var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog", "Compose", "Docker Hub"}
 var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"}
@@ -607,7 +608,7 @@ func frame(title string, content []string, width, height int) string {
 		if lipgloss.Width(line) > inner {
 			line = lipgloss.NewStyle().MaxWidth(inner).Render(line)
 		}
-		b.WriteString(edge.Render("│") + line + strings.Repeat(" ", max(0, inner-lipgloss.Width(line))) + edge.Render("│"))
+		b.WriteString(edge.Render("│") + surface.Render(line+strings.Repeat(" ", max(0, inner-lipgloss.Width(line)))) + edge.Render("│"))
 		if i < height-3 {
 			b.WriteByte('\n')
 		}
@@ -637,6 +638,16 @@ func sparkline(samples []float64, cells int, minCeiling float64) string {
 		b.WriteRune(blocks[idx])
 	}
 	return b.String()
+}
+func (m Model) header(w int) string {
+	title := cyan.Render("◆ DOCKTOP") + "  " + muted.Render("ENGINE / MCP")
+	if w < 80 {
+		return title
+	}
+	cpu, mem := m.snapshot.TotalUsage()
+	stats := fmt.Sprintf("CPU %.1f%%  MEM %.1f MiB", cpu, mem/1048576)
+	gap := max(1, w-lipgloss.Width(title)-lipgloss.Width(stats)-1)
+	return title + strings.Repeat(" ", gap) + green.Render(stats)
 }
 func (m Model) statusLine(w int) string {
 	ctx := m.snapshot.Context
@@ -707,10 +718,10 @@ func (m Model) View() string {
 		return cyan.Render("DOCKTOP") + " — enlarge terminal (at least 30x10)"
 	}
 	var b strings.Builder
-	b.WriteString(cyan.Render("DOCKTOP") + "  " + muted.Render(plain("Docker Engine + MCP Toolkit", max(0, w-12))) + "\n")
+	b.WriteString(m.header(w) + "\n")
 	b.WriteString(m.statusLine(w) + "\n")
 	b.WriteString(m.navigation(w) + "\n")
-	available := max(3, h-5)
+	available := max(3, h-6)
 	switch {
 	case m.showHelp:
 		b.WriteString(frame("KEYBOARD SHORTCUTS", []string{
@@ -785,55 +796,6 @@ func (m Model) body(w, h int) string {
 	}
 	d := frame(title, m.details(right-4), right, h)
 	return lipgloss.JoinHorizontal(lipgloss.Top, a, " ", d)
-}
-func (m Model) dashboard(w, h int) string {
-	running := 0
-	for _, c := range m.snapshot.Containers {
-		if c.State == "running" {
-			running++
-		}
-	}
-	cpu, mem := m.snapshot.TotalUsage()
-	summary := []string{
-		cyan.Render(plain(fmt.Sprintf(" CONTAINERS %d/%d running   IMAGES %d   NETWORKS %d   VOLUMES %d", running, len(m.snapshot.Containers), len(m.snapshot.Images), len(m.snapshot.Networks), len(m.snapshot.Volumes)), w-4)),
-	}
-	overviewHeight := 4
-	graphHeight := 8
-	if h < 18 {
-		graphHeight = 6
-	}
-	if h < 14 {
-		overviewHeight = 3
-		graphHeight = 5
-	}
-	rest := h - overviewHeight - graphHeight - 2
-	if rest < 3 {
-		return frame("DOCKER OVERVIEW", append(summary, m.list(w-4, h-5)...), w, h)
-	}
-	top := frame("DOCKER OVERVIEW", summary, w, overviewHeight)
-	graphWidth := max(7, w-32)
-	if graphWidth > w-5 {
-		graphWidth = w - 5
-	}
-	graphs := []string{
-		fmt.Sprintf("CPU sum: %.1f%%  (100%% = one core)", cpu),
-		green.Render(sparkline(m.cpuHistory, graphWidth, 100)),
-		fmt.Sprintf("Memory in running containers: %.1f MiB", mem/1024/1024),
-		cyan.Render(sparkline(m.memHistory, graphWidth, 64)),
-		muted.Render("Rolling history: last 60 successful samples, every ~5 seconds"),
-	}
-	center := frame("LIVE RESOURCE HISTORY", graphs, w, graphHeight)
-	bottom := ""
-	if w < 82 {
-		bottom = frame("CONTAINERS", m.list(w-4, rest-2), w, rest)
-	} else {
-		left := max(34, w*55/100)
-		right := w - left - 1
-		bottom = lipgloss.JoinHorizontal(lipgloss.Top,
-			frame("CONTAINERS", m.list(left-4, rest-2), left, rest), " ",
-			frame("SELECTED CONTAINER", m.details(right-4), right, rest))
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, top, "", center, "", bottom)
 }
 func (m Model) countSuffix() string {
 	if m.page == 5 {
