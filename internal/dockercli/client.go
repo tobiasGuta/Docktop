@@ -68,6 +68,8 @@ type Usage struct {
 	CPUPerc  string `json:"CPUPerc"`
 	MemUsage string `json:"MemUsage"`
 	MemPerc  string `json:"MemPerc"`
+	NetIO    string `json:"NetIO"`
+	BlockIO  string `json:"BlockIO"`
 }
 type Snapshot struct {
 	Context    string
@@ -176,7 +178,7 @@ func (c Client) MCP(ctx context.Context, filter string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return Clean(string(raw), 50000), nil
+	return Clean(string(raw), 300000), nil
 }
 
 // Clean rejects terminal control characters and limits untrusted CLI output.
