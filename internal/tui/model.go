@@ -53,6 +53,8 @@ type Model struct {
 	lastGPU                                                                                                hostmetrics.GPU
 	ioRates                                                                                                dockercli.IORates
 	rxHistory, diskHistory                                                                                 []float64
+	mcpInspectBusy, mcpAssigned, mcpAssignedBusy, mcpAssignedLoaded                                   bool
+	mcpInspectTarget, mcpAssignedText, mcpAssignedError                                               string
 	compose                                                                                                []dockercli.ComposeProject
 	hub                                                                                                    []dockercli.HubImage
 	hubQuery, hubError, composeError, profilesError, profilesText                                          string
@@ -97,6 +99,14 @@ type inspectMsg struct {
 	title, text string
 	err         error
 }
+type mcpInspectMsg struct {
+	name, text string
+	err        error
+}
+type mcpAssignedMsg struct {
+	text string
+	err  error
+}
 type pulledMsg struct {
 	image string
 	err   error
@@ -126,6 +136,12 @@ func searchHub(c dockercli.Client, q string) tea.Cmd {
 }
 func loadProfiles(c dockercli.Client) tea.Cmd {
 	return func() tea.Msg { v, e := c.MCPProfiles(context.Background()); return profilesMsg{v, e} }
+}
+func inspectMCPServer(c dockercli.Client, name string) tea.Cmd {
+	return func() tea.Msg { v, e := c.MCPServerDetails(context.Background(), name); return mcpInspectMsg{name, v, e} }
+}
+func loadMCPAssigned(c dockercli.Client) tea.Cmd {
+	return func() tea.Msg { v, e := c.MCPConfiguredServers(context.Background()); return mcpAssignedMsg{v, e} }
 }
 func inspectResource(c dockercli.Client, kind, id, title string) tea.Cmd {
 	return func() tea.Msg {
@@ -170,7 +186,7 @@ func (m Model) rowCount() int {
 	case 4:
 		return len(m.snapshot.Volumes)
 	case 5:
-		if m.showProfiles {
+		if m.showProfiles || m.mcpAssigned {
 			return 0
 		}
 		return len(mcpcatalog.Filter(m.servers, m.mcpFilter))
@@ -191,6 +207,13 @@ func (m *Model) switchPage(p int) {
 func (m *Model) loadExtraPage() tea.Cmd {
 	switch m.page {
 	case 5:
+		if m.mcpAssigned {
+			if !m.mcpAssignedLoaded && !m.mcpAssignedBusy {
+				m.mcpAssignedBusy = true
+				return loadMCPAssigned(m.client)
+			}
+			return nil
+		}
 		if m.showProfiles {
 			if !m.profilesLoaded && !m.profilesBusy {
 				m.profilesBusy = true
@@ -299,6 +322,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.profilesText = v.data
 			m.profilesError = ""
+		}
+	case mcpInspectMsg:
+		m.mcpInspectBusy = false
+		if m.page == 5 && !m.mcpAssigned && !m.showProfiles && m.mcpInspectTarget == v.name {
+			if v.err != nil {
+				m.message = "MCP metadata: " + v.err.Error()
+			} else {
+				m.detailTitle = "MCP CATALOG / " + v.name
+				m.detailText = v.text
+				m.scroll = 0
+			}
+		}
+	case mcpAssignedMsg:
+		m.mcpAssignedBusy = false
+		m.mcpAssignedLoaded = true
+		if v.err != nil {
+			m.mcpAssignedError = v.err.Error()
+			m.mcpAssignedText = ""
+		} else {
+			m.mcpAssignedError = ""
+			m.mcpAssignedText = v.text
 		}
 	case inspectMsg:
 		if v.err != nil {
@@ -466,26 +510,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.switchPage(int(key[0] - '1'))
 			return m, m.loadExtraPage()
 		case "up", "k":
-			if m.page == 5 && m.showProfiles {
+			if m.page == 5 && (m.showProfiles || m.mcpAssigned) {
 				m.scroll = max(0, m.scroll-1)
 			} else {
 				m.selected = max(0, m.selected-1)
 			}
 		case "down", "j":
-			if m.page == 5 && m.showProfiles {
+			if m.page == 5 && (m.showProfiles || m.mcpAssigned) {
 				m.scroll++
 			} else {
 				m.selected = min(m.rowCount()-1, m.selected+1)
 				m.clampSelection()
 			}
 		case "pgup":
-			if m.page == 5 && m.showProfiles {
+			if m.page == 5 && (m.showProfiles || m.mcpAssigned) {
 				m.scroll = max(0, m.scroll-10)
 			} else {
 				m.selected = max(0, m.selected-10)
 			}
 		case "pgdown":
-			if m.page == 5 && m.showProfiles {
+			if m.page == 5 && (m.showProfiles || m.mcpAssigned) {
 				m.scroll += 10
 			} else {
 				m.selected = min(m.rowCount()-1, m.selected+10)
@@ -496,6 +540,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end":
 			m.selected = max(0, m.rowCount()-1)
 		case "enter":
+			if m.page == 5 && !m.showProfiles && !m.mcpAssigned {
+				servers := m.filteredServers()
+				if m.selected < len(servers) && !m.mcpInspectBusy {
+					name := servers[m.selected].Name
+					m.mcpInspectTarget, m.mcpInspectBusy = name, true
+					m.message = "Inspecting catalog metadata for " + name
+					return m, inspectMCPServer(m.client, name)
+				}
+				return m, nil
+			}
 			if (m.page == 0 || m.page == 1) && m.selected < len(m.snapshot.Containers) {
 				c := m.snapshot.Containers[m.selected]
 				return m, inspectResource(m.client, "container", c.ID, "INSPECT / "+c.Names)
@@ -513,6 +567,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "r":
 			if m.page == 5 {
+				if m.mcpAssigned {
+					if !m.mcpAssignedBusy {
+						m.mcpAssignedBusy = true
+						return m, loadMCPAssigned(m.client)
+					}
+					return m, nil
+				}
 				if m.showProfiles {
 					m.profilesBusy = true
 					return m, loadProfiles(m.client)
@@ -541,8 +602,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.page == 7 {
 				m.hubEditing = true
 			}
+		case "a":
+			if m.page == 5 {
+				m.mcpAssigned = !m.mcpAssigned
+				m.showProfiles = false
+				m.scroll = 0
+				return m, m.loadExtraPage()
+			}
 		case "p":
 			if m.page == 5 {
+				m.mcpAssigned = false
 				m.showProfiles = !m.showProfiles
 				m.scroll = 0
 				return m, m.loadExtraPage()
@@ -746,7 +815,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [p] Profiles  [↑↓/Pg] Browse  [r] Reload  [?] Help  [q] Quit"
+		help = "[/] Search  [Enter] Inspect tools  [p] Profiles  [a] Configured  [r] Reload  [q] Quit"
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -776,7 +845,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: /  Live local search; p  Toggle read-only profile list",
+			"MCP: /  Search; Enter  Inspect advertised tools; p  Profiles; a  Configured servers",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
@@ -820,6 +889,17 @@ func (m Model) body(w, h int) string {
 	if m.page == 0 {
 		return m.dashboard(w, h)
 	}
+	if m.page == 5 && m.mcpAssigned {
+		lines := []string{muted.Render("Configured MCP servers across profiles  [a] to return to catalog")}
+		if m.mcpAssignedBusy {
+			lines = append(lines, "Loading configured server list…")
+		} else if m.mcpAssignedError != "" {
+			lines = append(lines, wrap("MCP configured servers unavailable: "+m.mcpAssignedError, w-4, 4)...)
+		} else {
+			lines = append(lines, splitAndScroll(m.mcpAssignedText, m.scroll, max(1, h-4), w-4)...)
+		}
+		return frame("CONFIGURED MCP SERVERS / READ ONLY", lines, w, h)
+	}
 	if m.page == 5 && m.showProfiles {
 		lines := []string{muted.Render("Read-only MCP profile list  [p] to return to catalog")}
 		if m.profilesBusy {
@@ -844,7 +924,7 @@ func (m Model) browserRibbon(w int) string {
 	case 5:
 		title = "MCP  /  CATALOG EXPLORER"
 		summary = fmt.Sprintf("SERVERS  %d matched / %d loaded  •  READ ONLY", len(m.filteredServers()), len(m.servers))
-		hint = "[/] local search   [p] profiles   [Enter] details   [r] reload catalog"
+		hint = "[/] search   [Enter] inspect tools   [p] profiles   [a] configured   [r] reload"
 	case 6:
 		title = "DOCKER  /  COMPOSE PROJECTS"
 		summary = fmt.Sprintf("PROJECTS  %d discovered   •   READ ONLY", len(m.compose))
@@ -1088,7 +1168,8 @@ func (m Model) details(width int) []string {
 		lines = append(lines, muted.Render("State changes require y confirmation."))
 	}
 	if m.page == 5 {
-		lines = append(lines, muted.Render("Catalog listing only. No MCP server executed."))
+		lines = append(lines, muted.Render("Enter: catalog metadata + advertised tool names (read only)"))
+		lines = append(lines, muted.Render("p: profiles   a: configured servers   no server execution"))
 	}
 	if m.page == 7 {
 		lines = append(lines, muted.Render("Press p to request pull; requires y confirmation."))

@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.6 browser readability and performance tooling)
+## What works (v0.7 MCP inspector)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -12,7 +12,7 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 - Recent Docker container CPU and memory history in bounded plots (60 samples; refresh ~5 seconds). CPU is the sum of running-container percentages: 100% equals one CPU core, **not** total host CPU. Memory is the sum of Docker-reported running-container usage.
 - Container CPU, memory, network I/O and block I/O readings where Docker supplies them.
 - Last 100 container log lines (bounded and sanitized), start/stop/restart **only after explicit confirmation**.
-- Read-only MCP catalog browser with client-side search of server names, titles, and descriptions, and a detail pane showing descriptions, tool counts, image/endpoint information. MCP, Compose and Hub now have compact, transparent status ribbons with navigation hints.
+- Read-only MCP catalog browser with client-side search of server names, titles, and descriptions. Press Enter to inspect sanitized catalog metadata and any advertised tool names and descriptions; the catalog may not include every live tool. MCP, Compose and Hub now have compact, transparent status ribbons with navigation hints.
 - Responsive single-panel mode for narrow terminals. No Docker Desktop or web interface required.
 
 Also supported since v0.3:
@@ -20,7 +20,7 @@ Also supported since v0.3:
 - **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths; requires Docker Compose CLI plugin.
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
-- **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of configured profiles; no activation, credential access or server execution.
+- **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles. No activation, credential access or server execution.
 - **Performance sampler**: `scripts/benchmark-process.sh PID [seconds] [interval]` reports interval CPU and resident memory min/mean/peak for Docktop without changing Docker state. The original `scripts/measure-process.sh` remains available for quick legacy snapshots.
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
@@ -71,6 +71,8 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 | `y` / `n` | Confirm or cancel a state change |
 | `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
+| `a` | MCP tab: toggle configured servers across profiles (read-only) |
+| `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution) |
 | `?` | Show help; `Esc` closes prompts or details |
 | `q`, `Ctrl+C` | Exit |
 
@@ -85,7 +87,7 @@ docker mcp catalog pull mcp/docker-mcp-catalog:latest
 
 - Docker CLI arguments are passed directly without a shell. The active Docker context and Docker permissions are honored.
 - Read-only discovery is the default. Container state changes use validated IDs and ask for a `y` confirmation. Image pulls use validated Docker Hub image names, pin the Docker context captured during review and require the same `y` confirmation.
-- No telemetry, credential storage, background Docktop daemon, socket forwarding, or MCP execution.
+- No telemetry, credential storage, background Docktop daemon, socket forwarding, or MCP execution. MCP inspection whitelists metadata fields and never prints configuration or secret payloads.
 - External text is sanitized; CLI commands are timeout-limited, logs are bounded, and metric history is capped to 60 samples.
 - **Docker daemon access is highly privileged.** Do not run Docktop as root or mount the Docker socket into untrusted workloads. Confirmation prompts are guardrails, not an OS security boundary.
 - Docker resource metrics are sourced from `docker stats` and do not represent whole-host CPU or RAM usage.

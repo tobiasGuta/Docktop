@@ -233,3 +233,44 @@ func TestBrowserRibbonResponsive(t *testing.T) {
 		}
 	}
 }
+
+
+func TestMCPInspectorAndConfiguredNavigation(t *testing.T) {
+	m := testModel()
+	m.page = 5
+	state, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	n := state.(Model)
+	if !n.mcpInspectBusy || n.mcpInspectTarget != "github-official" || cmd == nil {
+		t.Fatal("Enter should request selected server metadata asynchronously")
+	}
+	state, _ = n.Update(mcpInspectMsg{name: "github-official", text: "SERVER ID: github-official\nADVERTISED TOOLS\n- read", err: nil})
+	n = state.(Model)
+	if n.detailTitle == "" || !strings.Contains(n.detailText, "ADVERTISED TOOLS") {
+		t.Fatal("read-only metadata detail missing")
+	}
+	state, _ = n.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	n = state.(Model)
+	state, cmd = n.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	n = state.(Model)
+	if !n.mcpAssigned || n.showProfiles || !n.mcpAssignedBusy || cmd == nil {
+		t.Fatal("assigned-server list did not load")
+	}
+	state, _ = n.Update(mcpAssignedMsg{text: "github-official in dev"})
+	n = state.(Model)
+	if !strings.Contains(n.View(), "github-official in dev") {
+		t.Fatal("missing configured servers")
+	}
+	state, _ = n.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	n = state.(Model)
+	if n.mcpAssigned {
+		t.Fatal("configured toggle did not return to catalog")
+	}
+}
+func TestMCPInspectionStaleResponseIgnored(t *testing.T) {
+	m := testModel()
+	m.page = 2
+	state, _ := m.Update(mcpInspectMsg{name: "github-official", text: "STALE"})
+	if strings.Contains(state.(Model).View(), "STALE") {
+		t.Fatal("stale MCP response displayed after leaving catalog")
+	}
+}
