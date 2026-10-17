@@ -113,7 +113,7 @@ func (m Model) clientConnectedResult(v clientConnectDoneMsg)Model{
   p.notice="Docker MCP readback verified the exact client and profile."
   p.items=v.result.Updated
  case "blocked":
-  p.notice="Connection blocked before any write: "+v.result.Reason
+  p.notice="Connection blocked during safety preflight; check installation, profile and client status. No write attempted."
  default:
   p.outcome="unverified"
   p.notice="Connection result unverified. Inspect the client's configuration before retrying."
