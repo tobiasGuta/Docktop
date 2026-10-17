@@ -10,7 +10,7 @@ import (
 )
 
 // MCPToolPermission is allowlisted metadata, never raw profile configuration.
-type MCPToolPermission struct { Name, Description, Status string }
+type MCPToolPermission struct { Name, Description, Status, CapabilityHint string }
 type MCPPermissionView struct {
  Profile, Server, Mode string // all, none, allowlist, unknown
  Tools []MCPToolPermission
@@ -32,7 +32,7 @@ func parseMCPPermissions(raw []byte,profile,server string)(MCPPermissionView,err
    Tools json.RawMessage
    Snapshot *struct {Server struct {
     Name string
-    Tools []struct {Name,Description string}
+    Tools []struct {Name,Description string; Annotations *struct { ReadOnlyHint, DestructiveHint *bool }}
    }}
   }
  }
@@ -58,7 +58,18 @@ func parseMCPPermissions(raw []byte,profile,server string)(MCPPermissionView,err
    seen[t.Name]=true
    state:="disabled"
    if view.Mode=="all"||slices.Contains(enabled,t.Name){state="enabled"}
-   view.Tools=append(view.Tools,MCPToolPermission{Name:t.Name,Description:Clean(t.Description,180),Status:state})
+   hint:="unspecified"
+   if t.Annotations!=nil {
+    switch {
+    case t.Annotations.DestructiveHint!=nil && *t.Annotations.DestructiveHint:
+     hint="destructive"
+    case t.Annotations.ReadOnlyHint!=nil && *t.Annotations.ReadOnlyHint:
+     hint="read-only"
+    case t.Annotations.ReadOnlyHint!=nil && !*t.Annotations.ReadOnlyHint:
+     hint="other"
+    }
+   }
+   view.Tools=append(view.Tools,MCPToolPermission{Name:t.Name,Description:Clean(t.Description,180),Status:state,CapabilityHint:hint})
   }
   for _,name:=range enabled{if !seen[name]{return MCPPermissionView{},errors.New("allowlisted tool missing from server snapshot")}}
  }
