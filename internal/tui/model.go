@@ -35,6 +35,7 @@ type Model struct {
 	client                                                                                                 dockercli.Client
 	pm profileManager
 	clients mcpClientBrowser
+	mcpSecretsBusy bool
 	perm permissionOverlay
 	catalogAdd catalogAddModel
 	snapshot                                                                                               dockercli.Snapshot
@@ -207,6 +208,7 @@ func (m *Model) switchPage(p int) {
 	m.scroll = 0
 	m.message = ""
 	m.showItem = false
+	m.mcpSecretsBusy = false
 }
 func (m *Model) loadExtraPage() tea.Cmd {
 	switch m.page {
@@ -257,6 +259,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m=m.clientConnectedResult(v)
 	case configuredClientsMsg:
 		m=m.configuredClientResult(v)
+	case mcpSecretsMsg:
+		if m.mcpSecretsBusy {
+			m.mcpSecretsBusy = false
+			if m.message == "Reading Docker MCP secret inventory..." { m.message = "" }
+			if m.page == 5 && !m.pm.open && !m.clients.open && !m.perm.open && !m.catalogAdd.open && m.detailTitle == "" {
+				if v.err != nil {
+					m.message = "Docker MCP secret inventory unavailable; check docker mcp secret ls --json"
+				} else {
+					m.detailTitle = "MCP / STORED SECRET METADATA"
+					m.detailText = mcpSecretsText(v.values)
+					m.scroll = 0
+				}
+			}
+		}
 	case mcpPlanDoneMsg:
 		m=m.mcpPlanResult(v)
 	case permissionsLoadedMsg:
@@ -732,6 +748,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadLogs(m.client, c.ID, c.Names)
 			}
 		case "s":
+			if m.page == 5 && !m.mcpSecretsBusy {
+				m.mcpSecretsBusy = true
+				m.message = "Reading Docker MCP secret inventory..."
+				return m, fetchMCPSecrets(m.client)
+			}
 			if m.page == 1 && m.selected < len(m.snapshot.Containers) {
 				c := m.snapshot.Containers[m.selected]
 				op := "start"
@@ -955,7 +976,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Profiles  [i] Clients  [a] Configured  [q] Quit"
+		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Profiles  [i] Clients  [s] Secrets  [a] Configured  [q] Quit"
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -985,7 +1006,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; Shift+A add to profile; i configured clients / reviewed connection",
+			"MCP: / Search; Enter inspect; Shift+A add; i clients; s stored-secret metadata (read-only)",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
