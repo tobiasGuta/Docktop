@@ -347,7 +347,7 @@ func (m Model) permissionKey(key string)(tea.Model,tea.Cmd){
   case "r":
    p.phase="loading";p.editingFilter=false;p.staged=nil;p.detailScroll=0
    return m,loadPermissions(m.client,p.profile,p.server)
-  case "space":
+  case " ", "space":
    p.stageSelected()
   case "c":
    p.staged=nil
