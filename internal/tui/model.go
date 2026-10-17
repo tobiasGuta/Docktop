@@ -34,6 +34,7 @@ var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"
 type Model struct {
 	client                                                                                                 dockercli.Client
 	pm profileManager
+	perm permissionOverlay
 	catalogAdd catalogAddModel
 	snapshot                                                                                               dockercli.Snapshot
 	width, height                                                                                          int
@@ -249,6 +250,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case permissionsLoadedMsg:
+		m=m.permissionResult(v)
+	case permissionsChangedMsg:
+		m=m.permissionChanged(v)
 	case catalogAddProfilesMsg:
 		m=m.catalogAddProfilesResult(v)
 	case catalogAddMembersMsg:
@@ -524,6 +529,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
+		if m.perm.open {
+			return m.permissionKey(key)
+		}
 		if m.pm.open {
 			return m.managerKey(key)
 		}
@@ -597,6 +605,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "end":
 			m.selected = max(0, m.rowCount()-1)
 		case "enter":
+			if m.page==5 && m.mcpAssigned {
+				m.pm=profileManager{open:true,busy:true}
+				return m,fetchManagerProfiles(m.client)
+			}
 			if m.page == 5 && !m.showProfiles && !m.mcpAssigned {
 				servers := m.filteredServers()
 				if m.selected < len(servers) && !m.mcpInspectBusy {
@@ -890,6 +902,9 @@ func (m Model) footer(w int) string {
 	if m.confirmOperation != "" {
 		return muted.Render(plain("[y] Confirm  [n/Esc] Cancel", w))
 	}
+	if m.perm.open {
+		return muted.Render(plain(m.permissionFooter(), w))
+	}
 	if m.pm.open {
 		return muted.Render(plain(m.managerFooter(), w))
 	}
@@ -920,7 +935,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [Enter] Inspect  [Shift+A] Add server  [m] Profiles  [a] Configured  [q] Quit"
+		help = "[/] Search  [Enter] Inspect  [Shift+A] Add  [m] Manage profiles  [a] Configured  [q] Quit"
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -968,6 +983,8 @@ func (m Model) View() string {
 			rows = append([]string{muted.Render("[Esc] Return to catalog to use [a] configured / [p] profiles"), ""}, m.logLines(limit-2, max(8, w-4))...)
 		}
 		b.WriteString(frame(m.detailTitle+"  (Esc to close)", rows, w, available))
+	case m.perm.open:
+		b.WriteString(m.permissionView(w,available))
 	case m.pm.open:
 		b.WriteString(m.managerView(w,available))
 	case m.catalogAdd.open:
@@ -1003,7 +1020,7 @@ func (m Model) body(w, h int) string {
 		return m.dashboard(w, h)
 	}
 	if m.page == 5 && m.mcpAssigned {
-		lines := []string{muted.Render("Configured MCP servers across profiles  [a] to return to catalog")}
+		lines := []string{muted.Render("Configured MCP servers across profiles  [Enter] detailed manager  [a] catalog")}
 		if m.mcpAssignedBusy {
 			lines = append(lines, "Loading configured server list…")
 		} else if m.mcpAssignedError != "" {

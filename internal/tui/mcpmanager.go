@@ -56,7 +56,7 @@ func (m Model) managerFooter() string {
 	case p.stage==0:
 		return "[↑↓] Choose profile  [Enter] Open  [c] Create empty profile  [r] Refresh  [Esc/m] Catalog"
 	default:
-		return "[↑↓] Choose server  [e] Enable ALL tools  [d] Disable ALL tools  [r] Refresh  [Esc] Profiles  [m] Catalog"
+		return "[↑↓] Server  [t] Tool permissions  [x] Remove  [e/d] All tools  [Esc] Back"
 	}
 }
 func (m Model) managerView(w,h int) string {
@@ -125,10 +125,10 @@ func (m Model) managerView(w,h int) string {
 			row:=" "+server.Name
 			if i==p.serverIndex {items=append(items,selectedStyle.Render(padded("> "+row,max(10,w/2-6))))}else{items=append(items,row)}
 		}
-		if !p.serverBusy && len(p.servers)==0 {items=append(items,muted.Render("No assigned servers (or format unsupported)."))}
+		if !p.serverBusy && len(p.servers)==0 {items=append(items,muted.Render("No assigned servers in this profile."))}
 		side=append(side,cyan.Render("SELECTED SERVER"),"")
 		if p.serverIndex<len(p.servers) {side=append(side,plain(p.servers[p.serverIndex].Name,max(12,w/2-6)))}
-		side=append(side,"",green.Render("[e] ENABLE ALL TOOLS"),red.Render("[d] DISABLE ALL TOOLS"),"",
+		side=append(side,"",cyan.Render("[t] VIEW INDIVIDUAL TOOLS"),red.Render("[x] REMOVE THIS SERVER"),"",green.Render("[e] ENABLE ALL TOOLS"),red.Render("[d] DISABLE ALL TOOLS"),"",
 			"Does not add/remove server membership.",
 			"Current per-tool allowlist is not inferred from this list.",
 			"Operations take effect in the selected profile and may affect",
@@ -249,6 +249,17 @@ func (m Model) managerKey(key string)(tea.Model,tea.Cmd){
 			p.profileID=p.profiles[p.profileIndex].ID
 			p.stage=1;p.servers=nil;p.serverIndex=0;p.serverBusy=true;p.errText="";p.notice=""
 			return m,fetchManagerServers(m.client,p.profileID)
+		}
+	case "t":
+		if p.stage==1 && !p.serverBusy && p.serverIndex<len(p.servers) {
+			server:=p.servers[p.serverIndex].Name
+			m.perm=permissionOverlay{open:true,phase:"loading",profile:p.profileID,server:server}
+			return m,loadPermissions(m.client,p.profileID,server)
+		}
+	case "x":
+		if p.stage==1 && !p.serverBusy && p.serverIndex<len(p.servers) {
+			server:=p.servers[p.serverIndex].Name
+			m.perm=permissionOverlay{open:true,phase:"review-remove",profile:p.profileID,server:server,operation:"remove"}
 		}
 	case "e","d":
 		if p.stage==1 && !p.serverBusy && p.serverIndex<len(p.servers){
