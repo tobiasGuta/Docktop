@@ -183,7 +183,7 @@ func (m Model) permissionBrowse(w,h int)string {
 	if group==""{group="all"}
 	list:=[]string{
 		cyan.Render(plain("PROFILE "+p.profile+"  /  "+p.server,max(1,w-4))),"",
-		fmt.Sprintf("TOTAL %d  ENABLED %d  DISABLED %d",len(all),enabled,disabled),
+		fmt.Sprintf("TOTAL %d  EN %d  DIS %d",len(all),enabled,disabled),
 		muted.Render(plain("POLICY "+p.view.Mode+"   GROUP "+group,max(1,w-4))),
 		muted.Render(plain("SEARCH "+searchLabel(p.filter,p.editingFilter),max(1,w-4))),
 	}
