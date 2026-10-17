@@ -9,27 +9,27 @@ import (
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
 )
 
-// dashboard is composed of fixed-height boxes so its contents never run below
-// the footer. The only live data comes from the existing read-only snapshot.
+// dashboard uses bounded, responsive panels. Local host readings are
+// explicitly separated from the Docker context workload snapshot.
 func (m Model) dashboard(w, h int) string {
-	if w < 90 || h < 23 {
+	if w < 90 || h < 30 {
 		return m.compactDashboard(w, h)
 	}
-	topH := max(9, min(h-12, h*38/100))
+	topH := max(10, min(h-18, h*37/100))
 	topLeft := max(50, w*68/100)
 	topRight := w - topLeft - 1
 	cpu := frame("CPU  /  DOCKER WORKLOADS", m.cpuPanel(topLeft-4, topH-2), topLeft, topH)
-	engine := frame("ENGINE STATUS", m.enginePanel(topRight-4, topH-2), topRight, topH)
+	engine := frame("LOCAL HOST  /  DOCKER", m.enginePanel(topRight-4, topH-2), topRight, topH)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, cpu, " ", engine)
 	bottomH := h - topH - 1
 	leftW := max(36, w*43/100)
 	rightW := w - leftW - 1
-	memH := max(8, bottomH*58/100)
+	memH := max(8, bottomH*48/100)
 	ioH := bottomH - memH - 1
 	mem := frame("MEMORY  /  LIVE HISTORY", m.memoryPanel(leftW-4, memH-2), leftW, memH)
 	io := frame("NETWORK + DISK I/O", m.ioPanel(leftW-4, ioH-2), leftW, ioH)
 	left := lipgloss.JoinVertical(lipgloss.Left, mem, "", io)
-	listH := max(8, bottomH*58/100)
+	listH := max(8, bottomH*48/100)
 	detailH := bottomH - listH - 1
 	containers := frame("CONTAINERS  /  "+fmt.Sprint(len(m.snapshot.Containers)), m.dashboardContainerRows(rightW-4, listH-2), rightW, listH)
 	details := frame("SELECTED CONTAINER", m.compactContainerDetails(rightW-4, detailH-2), rightW, detailH)
@@ -53,6 +53,9 @@ func (m Model) compactDashboard(w, h int) string {
 	}
 	summary = append(summary, fmt.Sprintf("Containers %d/%d  Images %d  Networks %d  Volumes %d", running, len(m.snapshot.Containers), len(m.snapshot.Images), len(m.snapshot.Networks), len(m.snapshot.Volumes)))
 	summary = append(summary, green.Render(sparkline(m.cpuHistory, max(1, w-5), 10)))
+	if m.host.MemoryTotal > 0 {
+		summary = append(summary, fmt.Sprintf("HOST  CPU %.1f%%  RAM %.1f / %.1f GiB", m.host.CPUPercent, float64(m.host.MemoryUsed)/(1<<30), float64(m.host.MemoryTotal)/(1<<30)))
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, frame("DOCKER METRICS", summary, w, summaryH), "", frame("CONTAINERS", m.list(w-4, max(1, h-summaryH-3)), w, h-summaryH-1))
 }
 
@@ -63,7 +66,7 @@ func (m Model) cpuPanel(w, h int) []string {
 	lines := []string{caption}
 	chartH := max(2, h-3)
 	lines = append(lines, plotHistory(m.cpuHistory, max(12, w), chartH, 10, green)...)
-	lines = append(lines, muted.Render("0% └  oldest"+strings.Repeat(" ", max(1, w-30))+"newest  /  5s per sample"))
+	lines = append(lines, muted.Render("oldest → newest   •   5s/sample   •   local Docker context"))
 	return lines
 }
 func (m Model) memoryPanel(w, h int) []string {
@@ -82,60 +85,65 @@ func (m Model) enginePanel(w, h int) []string {
 			running++
 		}
 	}
-	cpu, mem := m.snapshot.TotalUsage()
+	lines := []string{}
+	if m.host.MemoryTotal > 0 {
+		cpuText := "collecting"
+		if m.host.CPUReady {
+			cpuText = fmt.Sprintf("%.1f%%", m.host.CPUPercent)
+		}
+		lines = append(lines, cyan.Render("LOCAL LINUX HOST")+"  "+muted.Render("/proc"))
+		lines = append(lines, fmt.Sprintf("CPU  %-9s%s", cpuText, muted.Render("all cores")))
+		lines = append(lines, green.Render(sparkline(m.hostCPUHistory, max(6, w-3), 100)))
+		lines = append(lines, fmt.Sprintf("RAM  %.1f / %.1f GiB", float64(m.host.MemoryUsed)/(1<<30), float64(m.host.MemoryTotal)/(1<<30)))
+		lines = append(lines, metricBar(float64(m.host.MemoryUsed), float64(m.host.MemoryTotal), max(5, w-3), cyan))
+		if m.host.GPU.Available {
+			gpu := m.host.GPU
+			label := fmt.Sprintf("GPU  %s %.0f%%", gpu.Name, gpu.Utilization)
+			if gpu.MemoryTotal > 0 {
+				label += fmt.Sprintf("  %.0f/%.0f MiB", float64(gpu.MemoryUsed)/(1<<20), float64(gpu.MemoryTotal)/(1<<20))
+			}
+			lines = append(lines, plain(label, w))
+		} else {
+			lines = append(lines, muted.Render("GPU  not reported (optional)"))
+		}
+	} else {
+		lines = append(lines, amber.Render("LOCAL HOST  unavailable"))
+		if m.hostError != "" {
+			lines = append(lines, muted.Render(plain(m.hostError, w)))
+		}
+	}
 	contextName := m.snapshot.Context
 	if contextName == "" {
 		contextName = "connecting"
 	}
-	status := "● CONNECTED"
-	color := green
+	status := green.Render("● READY")
 	if m.busy {
-		status = "◌ SYNCING"
-		color = amber
+		status = amber.Render("◌ SYNCING")
 	}
 	if m.snapshot.Context == "" {
-		status = "○ WAITING"
-		color = muted
+		status = muted.Render("○ WAITING")
 	}
-	lines := []string{color.Render(status), "", muted.Render("DOCKER CONTEXT"), cyan.Render(plain(contextName, w)), ""}
-	lines = append(lines, fmt.Sprintf("%s  %d/%d", green.Render("RUNNING"), running, len(m.snapshot.Containers)))
-	lines = append(lines, metricBar(float64(running), float64(max(1, len(m.snapshot.Containers))), max(4, w-2), green))
-	lines = append(lines, fmt.Sprintf("CPU  %6.1f%%     MEM  %.1f MiB", cpu, mem/1048576))
-	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("IMAGES  %-5d  NETWORKS  %d", len(m.snapshot.Images), len(m.snapshot.Networks)))
-	lines = append(lines, fmt.Sprintf("VOLUMES %-5d  MCP  read-only", len(m.snapshot.Volumes)))
-	if !m.snapshot.Updated.IsZero() {
-		lines = append(lines, "", muted.Render("SCAN  "+m.snapshot.Updated.Format("15:04:05")))
-	}
-	lines = append(lines, muted.Render("No host or VM telemetry implied"))
+	lines = append(lines, "", cyan.Render("DOCKER ENGINE")+"  "+status)
+	lines = append(lines, muted.Render("CTX ")+plain(contextName, max(1, w-6)))
+	lines = append(lines, fmt.Sprintf("RUNNING %d/%d   IMG %d   VOL %d", running, len(m.snapshot.Containers), len(m.snapshot.Images), len(m.snapshot.Volumes)))
+	lines = append(lines, muted.Render("Local host ≠ Docker workload metrics"))
 	return trimLines(lines, h)
 }
 
 func (m Model) ioPanel(w, h int) []string {
-	var rx, tx, read, write float64
-	for _, c := range m.snapshot.Containers {
-		if c.State != "running" {
-			continue
-		}
-		u := m.snapshot.Stats[c.ID]
-		if u.ID == "" {
-			u = m.snapshot.Stats[c.Names]
-		}
-		in, out := ioPair(u.NetIO)
-		rx += in
-		tx += out
-		in, out = ioPair(u.BlockIO)
-		read += in
-		write += out
+	lines := []string{muted.Render("Docker container I/O rates / second")}
+	if !m.ioRates.Ready {
+		return append(lines, "Collecting two matching samples…", muted.Render("No host network/disk telemetry"))
 	}
-	lines := []string{muted.Render("Container counters (cumulative, not rates)"), ""}
-	lines = append(lines, fmt.Sprintf("NET  RX  %s", niceBytes(rx)))
-	lines = append(lines, fmt.Sprintf("     TX  %s", niceBytes(tx)))
-	lines = append(lines, metricBar(rx, math.Max(1, math.Max(rx, tx)), max(4, w-3), cyan))
-	lines = append(lines, "")
-	lines = append(lines, fmt.Sprintf("DISK READ   %s", niceBytes(read)))
-	lines = append(lines, fmt.Sprintf("     WRITE  %s", niceBytes(write)))
-	lines = append(lines, metricBar(read, math.Max(1, math.Max(read, write)), max(4, w-3), green))
+	lines = append(lines, fmt.Sprintf("NET   ↓ %-13s ↑ %s", niceBytes(m.ioRates.RX)+"/s", niceBytes(m.ioRates.TX)+"/s"))
+	if h >= 7 {
+		lines = append(lines, cyan.Render(sparkline(m.rxHistory, max(1, w-3), max(1, historyPeak(m.rxHistory)))))
+	}
+	lines = append(lines, fmt.Sprintf("DISK  R %-13s W %s", niceBytes(m.ioRates.Read)+"/s", niceBytes(m.ioRates.Write)+"/s"))
+	if h >= 8 {
+		lines = append(lines, green.Render(sparkline(m.diskHistory, max(1, w-3), max(1, historyPeak(m.diskHistory)))))
+	}
+	lines = append(lines, muted.Render("~5s sampling; resets and new IDs skipped"))
 	return trimLines(lines, h)
 }
 
@@ -285,17 +293,29 @@ func plotHistory(samples []float64, width, height int, minimum float64, color li
 		if row == 0 {
 			label = fmt.Sprintf("%7.1f ", ceiling)
 		}
+		if row == height/2 && row != 0 {
+			label = fmt.Sprintf("%7.1f ", ceiling/2)
+		}
 		if row == height-1 {
 			label = "   0.0  "
 		}
+		grid := row > 0 && row < height-1 && (row == height/4 || row == height/2 || row == 3*height/4)
 		var bars strings.Builder
-		bars.WriteString(strings.Repeat(" ", max(0, plotWidth-len(samples))))
+		blank := " "
+		if grid {
+			blank = "·"
+		}
+		bars.WriteString(strings.Repeat(blank, max(0, plotWidth-len(samples))))
 		for _, raw := range samples {
 			v := math.Max(0, math.Min(ceiling, raw))
 			fraction := v/ceiling*float64(height) - (level - 1)
 			symbols := []rune(" ▁▂▃▄▅▆▇█")
 			index := max(0, min(8, int(math.Ceil(fraction*8))))
-			bars.WriteRune(symbols[index])
+			if index == 0 && grid {
+				bars.WriteString(blank)
+			} else {
+				bars.WriteRune(symbols[index])
+			}
 		}
 		out = append(out, muted.Render(label)+color.Render(bars.String()))
 	}

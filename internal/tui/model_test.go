@@ -4,9 +4,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
+	"github.com/tobiasGuta/Docktop/internal/hostmetrics"
 	"github.com/tobiasGuta/Docktop/internal/mcpcatalog"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testModel() Model {
@@ -142,6 +144,50 @@ func TestIOCountersAreNotRates(t *testing.T) {
 	in, out := ioPair("1.1MB / 500kB")
 	if in != 1.1e6 || out != 500e3 {
 		t.Fatalf("I/O parsing: %f %f", in, out)
+	}
+}
+
+func TestHostReadingsAreDistinctFromDockerMetrics(t *testing.T) {
+	m := testModel()
+	first := hostMsg{snapshot: hostmetrics.Snapshot{CPUCounters: hostmetrics.Counters{Total: 100, Idle: 60}, MemoryUsed: 8 << 30, MemoryTotal: 32 << 30}}
+	updated, _ := m.Update(first)
+	m = updated.(Model)
+	if m.host.CPUReady {
+		t.Fatal("one sample cannot produce CPU percentage")
+	}
+	updated, _ = m.Update(hostMsg{snapshot: hostmetrics.Snapshot{CPUCounters: hostmetrics.Counters{Total: 160, Idle: 80}, MemoryUsed: 9 << 30, MemoryTotal: 32 << 30}})
+	m = updated.(Model)
+	if !m.host.CPUReady || len(m.hostCPUHistory) != 1 || m.host.CPUPercent < 66 || m.host.CPUPercent > 67 {
+		t.Fatalf("incorrect host reading %+v", m.host)
+	}
+	if len(m.hostMemHistory) != 2 {
+		t.Fatal("host memory history missing")
+	}
+	m.width, m.height = 172, 52
+	rendered := m.View()
+	if !strings.Contains(rendered, "LOCAL HOST") || !strings.Contains(rendered, "LOCAL LINUX HOST") || !strings.Contains(rendered, "RAM") || !strings.Contains(rendered, "DOCKER ENGINE") {
+		t.Fatalf("no distinct host/Docker panels: %q", rendered)
+	}
+}
+func TestDockerIORatesAndResetAcrossContexts(t *testing.T) {
+	m := testModel()
+	base := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	m.snapshot.Updated = base
+	m.snapshot.Stats["0123456789abcdef"] = dockercli.Usage{ID: "0123456789abcdef", NetIO: "1MB / 1MB", BlockIO: "2MB / 2MB", CPUPerc: "2%"}
+	next := m.snapshot
+	next.Updated = base.Add(5 * time.Second)
+	next.Stats = map[string]dockercli.Usage{"0123456789abcdef": {ID: "0123456789abcdef", NetIO: "2MB / 3MB", BlockIO: "3MB / 4MB", CPUPerc: "3%"}}
+	updated, _ := m.Update(snapshotMsg{snapshot: next})
+	m = updated.(Model)
+	if !m.ioRates.Ready || m.ioRates.RX != 200000 || m.ioRates.TX != 400000 {
+		t.Fatalf("bad Docker rates %+v", m.ioRates)
+	}
+	next.Context = "remote"
+	next.Updated = next.Updated.Add(5 * time.Second)
+	updated, _ = m.Update(snapshotMsg{snapshot: next})
+	m = updated.(Model)
+	if m.ioRates.Ready || len(m.rxHistory) != 0 {
+		t.Fatal("I/O rates crossed Docker contexts")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
+	"github.com/tobiasGuta/Docktop/internal/hostmetrics"
 	"github.com/tobiasGuta/Docktop/internal/mcpcatalog"
 )
 
@@ -44,12 +45,25 @@ type Model struct {
 	detailTitle, detailText                                                                                string
 	showHelp, showItem                                                                                     bool
 	cpuHistory, memHistory                                                                                 []float64
+	hostCPUHistory, hostMemHistory                                                                         []float64
+	host                                                                                                   hostmetrics.Snapshot
+	hostError                                                                                              string
+	hostBusy                                                                                               bool
+	hostTicks                                                                                              int
+	lastGPU                                                                                                hostmetrics.GPU
+	ioRates                                                                                                dockercli.IORates
+	rxHistory, diskHistory                                                                                 []float64
 	compose                                                                                                []dockercli.ComposeProject
 	hub                                                                                                    []dockercli.HubImage
 	hubQuery, hubError, composeError, profilesError, profilesText                                          string
 	composeBusy, composeLoaded, hubBusy, hubLoaded, hubEditing, profilesBusy, profilesLoaded, showProfiles bool
 }
 
+type hostMsg struct {
+	snapshot  hostmetrics.Snapshot
+	err       error
+	gpuPolled bool
+}
 type snapshotMsg struct {
 	snapshot dockercli.Snapshot
 	err      error
@@ -89,6 +103,9 @@ type pulledMsg struct {
 }
 
 func New() Model { return Model{client: dockercli.New(), width: 100, height: 30, busy: true} }
+func pollHost(gpu bool) tea.Cmd {
+	return func() tea.Msg { s, err := hostmetrics.Read(gpu); return hostMsg{snapshot: s, err: err, gpuPolled: gpu} }
+}
 func poll(client dockercli.Client) tea.Cmd {
 	return func() tea.Msg { s, e := client.Snapshot(context.Background()); return snapshotMsg{s, e} }
 }
@@ -122,7 +139,7 @@ func pullHub(c dockercli.Client, name, ctx string) tea.Cmd {
 func tick() tea.Cmd {
 	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
-func (m Model) Init() tea.Cmd { return tea.Batch(poll(m.client), tick()) }
+func (m Model) Init() tea.Cmd { return tea.Batch(poll(m.client), pollHost(true), tick()) }
 
 func appendHistory(history []float64, sample float64) []float64 {
 	history = append(history, sample)
@@ -207,6 +224,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case hostMsg:
+		m.hostBusy = false
+		if v.err != nil {
+			m.hostError = v.err.Error()
+		} else {
+			m.hostError = ""
+			v.snapshot.CPUPercent, v.snapshot.CPUReady = hostmetrics.CPUPercent(m.host.CPUCounters, v.snapshot.CPUCounters)
+			if v.gpuPolled {
+				m.lastGPU = v.snapshot.GPU
+			}
+			v.snapshot.GPU = m.lastGPU
+			m.host = v.snapshot
+			if m.host.CPUReady {
+				m.hostCPUHistory = appendHistory(m.hostCPUHistory, m.host.CPUPercent)
+			}
+			m.hostMemHistory = appendHistory(m.hostMemHistory, float64(m.host.MemoryUsed)*100/float64(m.host.MemoryTotal))
+		}
 	case snapshotMsg:
 		m.busy = false
 		if v.err != nil {
@@ -214,6 +248,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			if m.snapshot.Context != "" && v.snapshot.Context != m.snapshot.Context {
 				m.cpuHistory, m.memHistory = nil, nil
+				m.ioRates = dockercli.IORates{}
+				m.rxHistory, m.diskHistory = nil, nil
+			}
+			if m.snapshot.Context != "" && m.snapshot.Context == v.snapshot.Context {
+				m.ioRates = dockercli.DeltaIO(m.snapshot.IOCounters(), v.snapshot.IOCounters(), v.snapshot.Updated.Sub(m.snapshot.Updated))
+				if m.ioRates.Ready {
+					m.rxHistory = appendHistory(m.rxHistory, m.ioRates.RX+m.ioRates.TX)
+					m.diskHistory = appendHistory(m.diskHistory, m.ioRates.Read+m.ioRates.Write)
+				}
 			}
 			m.snapshot = v.snapshot
 			if len(v.snapshot.Warnings) > 0 {
@@ -304,6 +347,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, poll(m.client)
 	case tickMsg:
 		cmds := []tea.Cmd{tick()}
+		if !m.hostBusy {
+			m.hostBusy = true
+			m.hostTicks++
+			cmds = append(cmds, pollHost(m.hostTicks%3 == 0))
+		}
 		if !m.busy {
 			m.busy = true
 			cmds = append(cmds, poll(m.client))

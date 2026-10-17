@@ -4,10 +4,10 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.4 visual refresh)
+## What works (v0.5 host telemetry and rates)
 
-- btop-inspired multi-panel dashboard with a CPU history graph, memory history, cumulative network/block I/O counters, Docker Engine summary, and a dense container list. Two-panel inspection pages remain available for detailed browsing.
-- Transparent panels that inherit the terminal background, with high-contrast borders and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
+- btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
+- Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
 - Docker containers, images, networks, and volumes, with full identifiers and metadata in the details panel.
 - Recent Docker container CPU and memory history in bounded plots (60 samples; refresh ~5 seconds). CPU is the sum of running-container percentages: 100% equals one CPU core, **not** total host CPU. Memory is the sum of Docker-reported running-container usage.
 - Container CPU, memory, network I/O and block I/O readings where Docker supplies them.
@@ -23,9 +23,15 @@ Also supported since v0.3:
 - **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of configured profiles; no activation, credential access or server execution.
 - **Measurement helper**: `scripts/measure-process.sh PID` reads the RSS and process-lifetime CPU average of an already running Docktop process. Does not measure Docker containers, and does not claim a comparative benchmark.
 
-The Docker I/O panel shows cumulative counters as reported by `docker stats`, **not bytes per second**. The CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
+The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
-Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The UI preserves the terminal's transparency instead of forcing an opaque panel background. The selected-row highlight remains intentional.
+Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
+
+### Local host metrics (Linux only)
+
+The upper-right card distinguishes **LOCAL LINUX HOST** (`/proc/stat` CPU, `/proc/meminfo` RAM using `MemAvailable`) from **DOCKER ENGINE** (active Docker context and container counts). GPU readings are optional: a bounded `nvidia-smi` query is attempted approximately every 15 seconds; AMD/compatible GPU drivers may use read-only `/sys/class/drm/.../gpu_busy_percent`. Unsupported drivers show **GPU not reported**, not a fabricated zero. Missing GPU tools do not prevent Docker monitoring. Host metrics describe the local machine running Docktop, even if the Docker context points to a remote daemon.
+
+The graphs use a 60-sample rolling window at roughly five-second intervals. Network and disk rates are sampling estimates, not exact real-time telemetry, and they are **Docker container workloads**, not whole-host I/O.
 
 ## Requirements
 
@@ -102,4 +108,4 @@ go vet ./...
 go build ./cmd/docktop
 ```
 
-The unit tests use fake Docker responses; they never interact with your local Docker daemon or running containers.
+The unit tests use fake Docker responses and synthetic Linux host counters; they never interact with your local Docker daemon or running containers.
