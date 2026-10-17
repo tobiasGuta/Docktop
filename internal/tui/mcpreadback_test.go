@@ -13,6 +13,7 @@ type policyReadbackFake struct {
  allowlist string
  initialMembers bool
  refuseReadback bool
+ readCount int
  sideEffect bool
  calls []string
 }
@@ -26,7 +27,8 @@ func (r *policyReadbackFake) Run(_ context.Context, args ...string) ([]byte,erro
   if !r.initialMembers {return []byte("[]"),nil}
   return []byte(`[{"profile":"development","name":"github-official"}]`),nil
  case "mcp profile show development --format json":
-  if r.refuseReadback {return []byte("unsupported response"),nil}
+  r.readCount++
+  if r.refuseReadback && r.readCount>1 {return []byte("unsupported response"),nil}
   payload:=fmt.Sprintf(`{"id":"development","servers":[{"snapshot":{"server":{"name":"github-official","tools":[{"name":"read"},{"name":"write"}]}},"tools":%s}]}`,r.allowlist)
   return []byte(payload),nil
  case "mcp profile tools development --enable github-official.write":
