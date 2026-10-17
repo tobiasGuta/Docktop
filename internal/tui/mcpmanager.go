@@ -98,7 +98,8 @@ func (m Model) managerView(w,h int) string {
 		items=append(items,cyan.Render(fmt.Sprintf("SELECT PROFILE  /  %d available",len(p.profiles))),"")
 		if p.busy {items=append(items,"Loading profiles...")}
 		for i,prof:=range p.profiles {
-			line:=fmt.Sprintf(" %s  %s",prof.ID,prof.Name)
+			line:=" "+prof.ID
+			if prof.Name!="" && prof.Name!=prof.ID {line+="  "+prof.Name}
 			if i==p.profileIndex {items=append(items,selectedStyle.Render(padded("> "+line,max(10,w/2-6))))} else {items=append(items,line)}
 		}
 		if !p.busy && len(p.profiles)==0 {
@@ -129,7 +130,7 @@ func (m Model) managerView(w,h int) string {
 		side=append(side,cyan.Render("SELECTED SERVER"),"")
 		if p.serverIndex<len(p.servers) {side=append(side,plain(p.servers[p.serverIndex].Name,max(12,w/2-6)))}
 		side=append(side,"",cyan.Render("[t] VIEW INDIVIDUAL TOOLS"),red.Render("[x] REMOVE THIS SERVER"),"",green.Render("[e] ENABLE ALL TOOLS"),red.Render("[d] DISABLE ALL TOOLS"),"",
-			"Does not add/remove server membership.",
+			"Tool controls preserve membership; [x] removes this server.",
 			"Current per-tool allowlist is not inferred from this list.",
 			"Operations take effect in the selected profile and may affect",
 			"already connected clients.",

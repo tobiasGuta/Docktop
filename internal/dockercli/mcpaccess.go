@@ -58,43 +58,107 @@ func parseProfiles(raw []byte) ([]MCPProfile, error) {
 	sort.Slice(out, func(i,j int) bool { return out[i].ID < out[j].ID })
 	return out,nil
 }
+// Docker MCP 0.44.x profile server ls --format json returns SearchResult
+// groups: [{id:"profile", name:"profile title", servers:[{snapshot:
+// {server:{name:"actual-server"}}}]}]. Never treat the group's "name"
+// as a server name; it is the PROFILE display name.
 func parseProfileServers(raw []byte, expectedProfile string) ([]MCPProfileServer, error) {
+	if !identifier(expectedProfile) { return nil, errors.New("invalid requested MCP profile") }
 	items, err := jsonObjects(raw, "servers")
 	if err != nil {
-		// Some Docker MCP builds group servers within each profile.
-		group, groupErr := jsonObjects(raw, "profiles")
-		if groupErr != nil { return nil, err }
-		items = nil
-		for _, groupItem := range group {
-			var p map[string]json.RawMessage
-			if json.Unmarshal(groupItem, &p) != nil { return nil, errors.New("invalid profile grouping") }
-			id := fieldString(p, "id", "profile", "profileId", "profile_id")
-			if id != expectedProfile { continue }
-			var members []json.RawMessage
-			if json.Unmarshal(p["servers"], &members) != nil { return nil, errors.New("invalid server group") }
-			items = append(items, members...)
-		}
+		// Some older builds return an envelope containing profile groups.
+		items, err = jsonObjects(raw, "profiles")
+		if err != nil { return nil, err }
 	}
-	seen:=map[string]bool{}
-	result:=make([]MCPProfileServer,0,len(items))
+	names := map[string]bool{}
+	result := []MCPProfileServer{}
+	groupSeen := false
+	addMember := func(item json.RawMessage, grouped bool) error {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(item, &obj); err != nil || obj == nil {
+			return errors.New("invalid MCP server entry")
+		}
+		if _, nestedGroup := obj["servers"]; nestedGroup {
+			return errors.New("nested MCP profile groups are unsupported")
+		}
+		pid := fieldString(obj, "profile", "profileId", "profile_id")
+		if pid != "" && pid != expectedProfile {
+			return errors.New("MCP server has mismatched profile identity")
+		}
+		// The nested snapshot is the authoritative server identity in Docker's
+		// structured SearchResult. Top-level 'name' is only a compatibility
+		// fallback for genuinely flat server records.
+		snapshotName := ""
+		if snap, ok := obj["snapshot"]; ok {
+			var parsed struct {
+				Server struct { Name string `json:"name"` } `json:"server"`
+			}
+			if json.Unmarshal(snap, &parsed) != nil {
+				return errors.New("malformed MCP server snapshot")
+			}
+			snapshotName = parsed.Server.Name
+			if !identifier(snapshotName) {
+				return errors.New("missing or invalid MCP snapshot server name")
+			}
+		}
+		named := fieldString(obj, "serverName", "server_name", "name")
+		if named == "" {
+			var nested map[string]json.RawMessage
+			if json.Unmarshal(obj["server"], &nested) == nil {
+				named = fieldString(nested, "name", "id")
+			}
+		}
+		if snapshotName != "" && named != "" && snapshotName != named {
+			return errors.New("MCP server name disagrees with snapshot")
+		}
+		name := snapshotName
+		if name == "" { name = named }
+		if grouped && snapshotName == "" {
+			return errors.New("profile-grouped MCP server has no verified snapshot name")
+		}
+		if !identifier(name) { return errors.New("unrecognized MCP server name; no changes permitted") }
+		if names[name] { return errors.New("duplicate MCP server identity") }
+		names[name] = true
+		result = append(result, MCPProfileServer{Name: name})
+		if len(result) > 1000 { return errors.New("too many MCP servers") }
+		return nil
+	}
 	for _, item := range items {
 		var obj map[string]json.RawMessage
-		if json.Unmarshal(item, &obj) != nil { return nil, errors.New("invalid MCP server entry") }
-		pid:=fieldString(obj, "profile","profileId","profile_id")
-		if pid!="" && pid!=expectedProfile { continue }
-		name:=fieldString(obj,"name","serverName","server_name")
-		if name=="" {
-			var nested map[string]json.RawMessage
-			if json.Unmarshal(obj["server"],&nested)==nil { name=fieldString(nested,"name","id") }
+		if err := json.Unmarshal(item, &obj); err != nil || obj == nil {
+			return nil, errors.New("invalid MCP profile-server entry")
 		}
-		if !identifier(name) { return nil, errors.New("unrecognized MCP server name; no changes permitted") }
-		if seen[name] { continue }
-		seen[name]=true
-		result=append(result,MCPProfileServer{Name:name})
-		if len(result)>1000 { return nil,errors.New("too many MCP servers") }
+		if children, isGroup := obj["servers"]; isGroup {
+			groupSeen = true
+			pid := fieldString(obj, "id", "profile", "profileId", "profile_id")
+			if !identifier(pid) { return nil, errors.New("invalid MCP profile group ID") }
+			if pid != expectedProfile { continue }
+			var members []json.RawMessage
+			if err := json.Unmarshal(children, &members); err != nil || members == nil {
+				return nil, errors.New("invalid MCP group server array")
+			}
+			for _, member := range members {
+				if err := addMember(member, true); err != nil { return nil, err }
+			}
+			continue
+		}
+		// Compatibility with older flat records: [{profile,name}, ...].
+		pid := fieldString(obj, "profile", "profileId", "profile_id")
+		if pid != "" && pid != expectedProfile { continue }
+		if err := addMember(item, false); err != nil { return nil, err }
 	}
-	sort.Slice(result,func(i,j int)bool{return result[i].Name<result[j].Name})
-	return result,nil
+	if groupSeen && len(items) > 0 && len(result) == 0 {
+		// Empty matching group is valid; an unrelated group alone is not.
+		found := false
+		for _, item := range items {
+			var obj map[string]json.RawMessage
+			_ = json.Unmarshal(item, &obj)
+			if fieldString(obj, "id", "profile", "profileId", "profile_id") == expectedProfile { found = true; break }
+		}
+		if !found { return nil, errors.New("expected MCP profile group missing") }
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result, nil
 }
 
 // MCPProfilesSafe and MCPProfileMembers read only structured metadata.
