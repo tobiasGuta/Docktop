@@ -389,3 +389,24 @@ func TestManagerEscapeAndLateResponse(t *testing.T){
 	m=updated.(Model)
 	if m.pm.open || len(m.pm.profiles)!=0 {t.Fatal("stale async response revived manager")}
 }
+
+func TestSnapshotTimingStatusAtWideTerminalOnly(t *testing.T) {
+	m := testModel()
+	m.snapshot.Duration = 85 * time.Millisecond
+	m.snapshot.QueryTimings = []dockercli.QueryTiming{
+		{Step: "context", Duration: 5 * time.Millisecond},
+		{Step: "stats", Duration: 70 * time.Millisecond},
+	}
+	m.width, m.height = 172, 52
+	if line := m.statusLine(172); !strings.Contains(line, "poll 85ms") || !strings.Contains(line, "slow: stats 70ms") {
+		t.Fatalf("snapshot timing not visible in wide terminal: %q", line)
+	}
+	if line := m.statusLine(80); strings.Contains(line, "poll 85ms") {
+		t.Fatalf("timing should not clutter compact terminal: %q", line)
+	}
+	for _, line := range strings.Split(m.View(), "\n") {
+		if lipgloss.Width(line) > 172 {
+			t.Fatalf("timings overflowed terminal: %q", line)
+		}
+	}
+}

@@ -71,15 +71,34 @@ type Usage struct {
 	NetIO    string `json:"NetIO"`
 	BlockIO  string `json:"BlockIO"`
 }
+// QueryTiming is one read-only Docker command latency from the latest snapshot.
+// Step names come from Docktop, never from Docker output or CLI arguments.
+type QueryTiming struct {
+	Step     string
+	Duration time.Duration
+}
+
 type Snapshot struct {
-	Context    string
-	Containers []Container
-	Images     []Image
-	Networks   []Network
-	Volumes    []Volume
-	Stats      map[string]Usage
-	Warnings   []string
-	Updated    time.Time
+	Context      string
+	Containers   []Container
+	Images       []Image
+	Networks     []Network
+	Volumes      []Volume
+	Stats        map[string]Usage
+	Warnings     []string
+	Updated      time.Time
+	Duration     time.Duration
+	QueryTimings []QueryTiming
+}
+
+// SlowestQuery identifies the most expensive Docker CLI read in the last scan.
+func (s Snapshot) SlowestQuery() (step string, duration time.Duration) {
+	for _, sample := range s.QueryTimings {
+		if sample.Duration > duration {
+			step, duration = sample.Step, sample.Duration
+		}
+	}
+	return step, duration
 }
 
 func decodeLines[T any](raw []byte) ([]T, error) {
@@ -97,22 +116,52 @@ func decodeLines[T any](raw []byte) ([]T, error) {
 	return result, nil
 }
 
-// Snapshot reads the active Docker CLI context. It never modifies Docker state.
-func (c Client) Snapshot(ctx context.Context) (Snapshot, error) {
-	s := Snapshot{Stats: make(map[string]Usage), Updated: time.Now()}
-	raw, err := c.run(ctx, "context", "show")
-	if err != nil {
-		return s, err
+// validSnapshotContext rejects untrusted context-show output that cannot be
+// safely used as a single Docker CLI argument or displayed in the TUI.
+func validSnapshotContext(name string) bool {
+	return name != "" && len(name) <= 128 && !strings.HasPrefix(name, "-") &&
+		!strings.ContainsAny(name, "\x00\r\n\t\x1b") && Clean(name, 129) == name
+}
+
+// Snapshot reads from a single captured Docker context for all six Docker CLI
+// queries. Docker resources may still change during the sequential scan; this
+// prevents cross-context mixing, not concurrent changes within one engine.
+// The complete scan has a deadline so a slow or remote engine cannot leave the
+// UI waiting indefinitely. Diagnostics contain only fixed, safe wording.
+func (c Client) Snapshot(ctx context.Context) (s Snapshot, snapshotErr error) {
+	started := time.Now()
+	s = Snapshot{Stats: make(map[string]Usage), Updated: started}
+	defer func() { s.Duration = time.Since(started) }()
+
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	read := func(step string, args ...string) ([]byte, error) {
+		start := time.Now()
+		data, err := c.run(ctx, args...)
+		s.QueryTimings = append(s.QueryTimings, QueryTiming{Step: step, Duration: time.Since(start)})
+		return data, err
 	}
-	s.Context = strings.TrimSpace(string(raw))
-	raw, err = c.run(ctx, "ps", "-a", "--format", "{{json .}}")
+
+	raw, err := read("context", "context", "show")
 	if err != nil {
-		return s, err
+		return s, errors.New("Docker context unavailable")
+	}
+	name := strings.TrimSpace(string(raw))
+	if !validSnapshotContext(name) {
+		return s, errors.New("Docker context name invalid")
+	}
+	s.Context = name
+
+	// Every remaining query is pinned to the same captured context.
+	raw, err = read("containers", "--context", name, "ps", "-a", "--format", "{{json .}}")
+	if err != nil {
+		return s, errors.New("Docker container listing unavailable")
 	}
 	s.Containers, err = decodeLines[Container](raw)
 	if err != nil {
-		return s, err
+		return s, errors.New("Docker container listing invalid")
 	}
+
 	for _, request := range []struct {
 		kind string
 		args []string
@@ -130,13 +179,14 @@ func (c Client) Snapshot(ctx context.Context) (Snapshot, error) {
 			return e
 		}},
 	} {
-		output, runErr := c.run(ctx, request.args...)
+		args := append([]string{"--context", name}, request.args...)
+		output, runErr := read(request.kind, args...)
 		if runErr != nil {
-			s.Warnings = append(s.Warnings, request.kind+": "+runErr.Error())
+			s.Warnings = append(s.Warnings, request.kind+": Docker query unavailable")
 			continue
 		}
 		if parseErr := request.read(output); parseErr != nil {
-			s.Warnings = append(s.Warnings, request.kind+": "+parseErr.Error())
+			s.Warnings = append(s.Warnings, request.kind+": invalid Docker data")
 		}
 	}
 	return s, nil
