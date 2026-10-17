@@ -144,3 +144,17 @@ func TestIOCountersAreNotRates(t *testing.T) {
 		t.Fatalf("I/O parsing: %f %f", in, out)
 	}
 }
+
+func TestFrameInheritsTerminalBackground(t *testing.T) {
+	// Ordinary panel rows should not force an ANSI background color.
+	// Highlighted selected rows are intentionally styled separately.
+	rendered := frame("Transparent", []string{"plain", cyan.Render("accent")}, 40, 6)
+	if strings.Contains(rendered, "\x1b[48;") || strings.Contains(rendered, "\x1b[40m") {
+		t.Fatalf("panel applies an explicit background: %q", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if lipgloss.Width(line) != 40 {
+			t.Fatalf("frame lost alignment: width=%d", lipgloss.Width(line))
+		}
+	}
+}

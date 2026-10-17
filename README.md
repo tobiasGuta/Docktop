@@ -7,7 +7,7 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 ## What works (v0.4 visual refresh)
 
 - btop-inspired multi-panel dashboard with a CPU history graph, memory history, cumulative network/block I/O counters, Docker Engine summary, and a dense container list. Two-panel inspection pages remain available for detailed browsing.
-- High-contrast, dark-filled panels and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
+- Transparent panels that inherit the terminal background, with high-contrast borders and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
 - Docker containers, images, networks, and volumes, with full identifiers and metadata in the details panel.
 - Recent Docker container CPU and memory history in bounded plots (60 samples; refresh ~5 seconds). CPU is the sum of running-container percentages: 100% equals one CPU core, **not** total host CPU. Memory is the sum of Docker-reported running-container usage.
 - Container CPU, memory, network I/O and block I/O readings where Docker supplies them.
@@ -25,7 +25,7 @@ Also supported since v0.3:
 
 The Docker I/O panel shows cumulative counters as reported by `docker stats`, **not bytes per second**. The CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
-Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The visual refresh uses a dark background for panel readability even in transparent terminals.
+Not yet implemented: Compose management operations, container creation, advanced image management, MCP activation/installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The UI preserves the terminal's transparency instead of forcing an opaque panel background. The selected-row highlight remains intentional.
 
 ## Requirements
 

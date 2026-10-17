@@ -26,7 +26,6 @@ var (
 	red           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24"))
 	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color("61"))
-	surface       = lipgloss.NewStyle().Background(lipgloss.Color("235"))
 )
 var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog", "Compose", "Docker Hub"}
 var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"}
@@ -608,7 +607,7 @@ func frame(title string, content []string, width, height int) string {
 		if lipgloss.Width(line) > inner {
 			line = lipgloss.NewStyle().MaxWidth(inner).Render(line)
 		}
-		b.WriteString(edge.Render("│") + surface.Render(line+strings.Repeat(" ", max(0, inner-lipgloss.Width(line)))) + edge.Render("│"))
+		b.WriteString(edge.Render("│") + line + strings.Repeat(" ", max(0, inner-lipgloss.Width(line))) + edge.Render("│"))
 		if i < height-3 {
 			b.WriteByte('\n')
 		}
