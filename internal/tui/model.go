@@ -34,6 +34,7 @@ var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"
 type Model struct {
 	client                                                                                                 dockercli.Client
 	pm profileManager
+	catalogAdd catalogAddModel
 	snapshot                                                                                               dockercli.Snapshot
 	width, height                                                                                          int
 	page, selected, scroll                                                                                 int
@@ -248,6 +249,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = v.Width, v.Height
+	case catalogAddProfilesMsg:
+		m=m.catalogAddProfilesResult(v)
+	case catalogAddMembersMsg:
+		m=m.catalogAddMembersResult(v)
+	case catalogAddCompletedMsg:
+		m=m.catalogAddCompleteResult(v)
 	case managerProfilesMsg:
 		if m.pm.open && m.pm.stage==0 {
 			m.pm.busy=false
@@ -520,6 +527,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.pm.open {
 			return m.managerKey(key)
 		}
+		if m.catalogAdd.open {
+			return m.catalogAddKey(key)
+		}
 		if m.detailTitle != "" {
 			switch key {
 			case "esc", "q":
@@ -648,6 +658,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.page == 7 {
 				m.hubEditing = true
+			}
+		case "A":
+			if m.page==5 && !m.showProfiles && !m.mcpAssigned && m.mcpLoaded && !m.mcpBusy {
+				servers:=m.filteredServers()
+				if m.selected>=0 && m.selected<len(servers) {
+					name:=servers[m.selected].Name
+					if _,err:=dockercli.MCPCatalogServerRef(name);err!=nil {
+						m.message="Invalid catalog server name; cannot add"
+						return m,nil
+					}
+					m.catalogAdd=catalogAddModel{open:true,server:name,phase:"loading"}
+					return m,fetchAddProfiles(m.client,name)
+				}
 			}
 		case "a":
 			if m.page == 5 {
@@ -870,6 +893,9 @@ func (m Model) footer(w int) string {
 	if m.pm.open {
 		return muted.Render(plain(m.managerFooter(), w))
 	}
+	if m.catalogAdd.open {
+		return muted.Render(plain(m.catalogAddFooter(), w))
+	}
 	if m.detailTitle != "" {
 		help := "[Esc/q] Back  [↑↓/PgUp/PgDn] Scroll"
 		if m.page == 5 && strings.HasPrefix(m.detailTitle, "MCP CATALOG / ") {
@@ -894,7 +920,7 @@ func (m Model) footer(w int) string {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
 	}
 	if m.page == 5 {
-		help = "[/] Search  [Enter] Inspect tools  [m] Manage policies  [p] Profiles  [a] Configured  [r] Reload  [q] Quit"
+		help = "[/] Search  [Enter] Inspect  [Shift+A] Add server  [m] Profiles  [a] Configured  [q] Quit"
 	}
 	if m.page == 6 {
 		help = "[7] Compose  [↑↓] Browse  [r] Reload  [q] Quit"
@@ -924,7 +950,7 @@ func (m Model) View() string {
 			"Enter  Item details       r  Refresh current data       q  Quit",
 			"Containers: l  Last 100 log lines; s  Start/stop; R  Restart",
 			"Mutating actions always require explicit y confirmation.",
-			"MCP: / Search; Enter inspect; m profile manager/create; p profiles; a configured",
+			"MCP: / Search; Enter inspect; Shift+A add to profile (confirmation required)",
 			"Docker Hub: / Search; p Pull selected image (requires confirmation)",
 			"Compose: list existing projects (read-only)",
 			"Esc  Close details / prompts; actions target the current Docker context.",
@@ -944,6 +970,8 @@ func (m Model) View() string {
 		b.WriteString(frame(m.detailTitle+"  (Esc to close)", rows, w, available))
 	case m.pm.open:
 		b.WriteString(m.managerView(w,available))
+	case m.catalogAdd.open:
+		b.WriteString(m.catalogAddView(w,available))
 	case m.showItem:
 		b.WriteString(frame("DETAILS  (Enter/Esc to return)", m.details(w-4), w, available))
 	default:
@@ -1009,7 +1037,7 @@ func (m Model) browserRibbon(w int) string {
 	case 5:
 		title = "MCP  /  CATALOG EXPLORER"
 		summary = fmt.Sprintf("SERVERS  %d matched / %d loaded  •  READ ONLY", len(m.filteredServers()), len(m.servers))
-		hint = "[/] search   [Enter] inspect tools   [m] manage policy   [p] profiles   [a] assigned"
+		hint = "[/] search   [Enter] inspect   [Shift+A] add to profile   [m] profiles   [a] configured"
 	case 6:
 		title = "DOCKER  /  COMPOSE PROJECTS"
 		summary = fmt.Sprintf("PROJECTS  %d discovered   •   READ ONLY", len(m.compose))

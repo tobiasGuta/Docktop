@@ -4,7 +4,7 @@
 
 Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
 
-## What works (v0.8.1 MCP empty-profile onboarding)
+## What works (v0.9 MCP catalog-to-profile assignment)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
@@ -21,6 +21,7 @@ Also supported since v0.3:
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
 - **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles.
+- **MCP catalog-to-profile add** (`6`, select server, `Shift+A`): choose an existing profile, review the exact `catalog://mcp/docker-mcp-catalog/<server>` reference, and confirm with `y`. Docktop rechecks profile existence, current membership and catalog metadata immediately before the add. No automatic `--enable-all`, gateway launch, or tool execution; Docker MCP itself may expose assigned tools, so treat the change as security-relevant.
 - **Empty-profile onboarding:** The profile manager explains when profiles may be disabled, shows the manual enable command, and supports `c` to create an empty profile after name review and explicit `y` confirmation. No servers or tools are added or enabled automatically.
 - **Profile tool permission manager** (`6`, then `m`): navigate a structured profile list, select an assigned server, press `e` to request enabling **all** its tools or `d` to request disabling **all** its tools. An explicit `y` confirmation is required. Profile IDs and server membership are rechecked before modifying tool permissions. This neither adds/removes a server nor starts it. Changes may affect connected clients immediately.
 - **Performance sampler**: `scripts/benchmark-process.sh PID [seconds] [interval]` reports interval CPU and resident memory min/mean/peak for Docktop without changing Docker state. The original `scripts/measure-process.sh` remains available for quick legacy snapshots.
@@ -74,6 +75,7 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 | `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
 | `a` | MCP tab: toggle configured servers across profiles (read-only); close an inspection with `Esc` first |
+| `Shift+A` | MCP Catalog: request adding selected catalog server to an existing profile. Select profile, review exact reference, then `y` to approve or `n/Esc` to cancel. |
 | `m` | MCP tab: open profile tool-permission manager. Use `c` to create a new empty profile (review + `y` confirmation), or select an existing profile with Enter, choose server, `e` enable all tools / `d` disable all tools, `y` confirm or `n` cancel. `Esc` backs out. |
 | `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution); `Esc` returns to the catalog |
 | `?` | Show help; `Esc` closes prompts or details |
