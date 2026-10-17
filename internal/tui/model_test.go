@@ -7,6 +7,7 @@ import (
 	"github.com/tobiasGuta/Docktop/internal/hostmetrics"
 	"github.com/tobiasGuta/Docktop/internal/mcpcatalog"
 	"strings"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -272,5 +273,78 @@ func TestMCPInspectionStaleResponseIgnored(t *testing.T) {
 	state, _ := m.Update(mcpInspectMsg{name: "github-official", text: "STALE"})
 	if strings.Contains(state.(Model).View(), "STALE") {
 		t.Fatal("stale MCP response displayed after leaving catalog")
+	}
+}
+
+
+func TestMCPDetailFooterAndCompletedStatus(t *testing.T) {
+	m := testModel()
+	m.page = 5
+	m.message = "Inspecting catalog metadata for github-official"
+	m.mcpInspectBusy = true
+	m.mcpInspectTarget = "github-official"
+
+	updated, _ := m.Update(mcpInspectMsg{name: "github-official", text: "SERVER ID: github-official\nADVERTISED TOOLS"})
+	m = updated.(Model)
+	if m.message != "" || m.mcpInspectBusy || m.detailTitle != "MCP CATALOG / github-official" {
+		t.Fatalf("inspection did not finish cleanly: %+v", m)
+	}
+	view := m.View()
+	if strings.Contains(view, "Inspecting catalog metadata") {
+		t.Fatal("stale inspection banner remains")
+	}
+	if !strings.Contains(view, "[Esc] Return to catalog") {
+		t.Fatal("modal does not explain the return path")
+	}
+	if !strings.Contains(m.footer(120), "[p/a] Available after returning") {
+		t.Fatalf("footer did not explain modal shortcuts: %q", m.footer(120))
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(Model)
+	if m.mcpAssigned || m.detailTitle == "" {
+		t.Fatal("a must not toggle configured servers while inspection is open")
+	}
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.detailTitle != "" || !strings.Contains(m.footer(120), "[a] Configured") {
+		t.Fatal("Esc did not restore MCP catalog shortcuts")
+	}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	m = updated.(Model)
+	if !m.mcpAssigned || cmd == nil {
+		t.Fatal("a must load configured servers after returning")
+	}
+}
+
+func TestMCPInspectErrorsAndNotifications(t *testing.T) {
+	m := testModel()
+	m.page = 5
+	m.message = "Inspecting catalog metadata for github-official"
+	m.mcpInspectTarget = "github-official"
+	updated, _ := m.Update(mcpInspectMsg{name: "github-official", err: fmt.Errorf("metadata unavailable")})
+	m = updated.(Model)
+	if !strings.Contains(m.message, "metadata unavailable") {
+		t.Fatal("inspection errors must remain visible")
+	}
+
+	m.message = "Unrelated notification"
+	updated, _ = m.Update(mcpInspectMsg{name: "github-official", text: "server"})
+	m = updated.(Model)
+	if m.message != "Unrelated notification" {
+		t.Fatal("inspection should not clear unrelated notifications")
+	}
+}
+
+func TestContextFooterForOtherModals(t *testing.T) {
+	m := testModel()
+	m.confirmOperation = "stop"
+	if strings.Contains(m.footer(100), "[a]") || !strings.Contains(m.footer(100), "[y] Confirm") {
+		t.Fatal("confirmation footer is not contextual")
+	}
+	m.confirmOperation = ""
+	m.detailTitle = "LOGS / database-production"
+	if strings.Contains(m.footer(100), "MCP") || !strings.Contains(m.footer(100), "Scroll") {
+		t.Fatal("logs footer is not contextual")
 	}
 }

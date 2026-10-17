@@ -325,6 +325,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case mcpInspectMsg:
 		m.mcpInspectBusy = false
+		// Clear the temporary loading banner when that request finishes.
+		// Preserve unrelated errors or notifications from later actions.
+		if m.message == "Inspecting catalog metadata for "+v.name {
+			m.message = ""
+		}
 		if m.page == 5 && !m.mcpAssigned && !m.showProfiles && m.mcpInspectTarget == v.name {
 			if v.err != nil {
 				m.message = "MCP metadata: " + v.err.Error()
@@ -810,6 +815,30 @@ func plainStyledNavigation(value string, w int) string {
 	return selectedStyle.Render(" " + plain("Docktop / use 1–8 or Tab to switch", w-2) + " ")
 }
 func (m Model) footer(w int) string {
+	// Modal and text-entry shortcuts take precedence over page-level shortcuts.
+	// In particular, p and a are disabled inside MCP metadata inspection.
+	if m.confirmOperation != "" {
+		return muted.Render(plain("[y] Confirm  [n/Esc] Cancel", w))
+	}
+	if m.detailTitle != "" {
+		help := "[Esc/q] Back  [↑↓/PgUp/PgDn] Scroll"
+		if m.page == 5 && strings.HasPrefix(m.detailTitle, "MCP CATALOG / ") {
+			help = "[Esc/q] Back to MCP Catalog  [↑↓/PgUp/PgDn] Scroll  [p/a] Available after returning"
+		}
+		return muted.Render(plain(help, w))
+	}
+	if m.showItem {
+		return muted.Render(plain("[Enter/Esc/q] Back to list", w))
+	}
+	if m.showHelp {
+		return muted.Render(plain("[Any key] Close help", w))
+	}
+	if m.editingFilter {
+		return muted.Render(plain("[Enter] Apply filter  [Esc] Close search  [Ctrl+U] Clear", w))
+	}
+	if m.hubEditing {
+		return muted.Render(plain("[Enter] Search Docker Hub  [Esc] Cancel  [Ctrl+U] Clear", w))
+	}
 	help := "[1–8] Views  [Tab] Next  [↑↓/Pg] Navigate  [Enter] Details  [r] Refresh  [?] Help  [q] Quit"
 	if m.page == 1 {
 		help = "[l] Logs  [s] Start/Stop  [R] Restart  [Enter] Details  [?] Help  [q] Quit"
@@ -857,7 +886,11 @@ func (m Model) View() string {
 		lines = append(lines, "ID: "+plain(m.confirmID, w-6), "", "Press y to execute, n or Esc to cancel.")
 		b.WriteString(frame("CONFIRM ACTION", lines, w, available))
 	case m.detailTitle != "":
-		rows := m.logLines(max(1, available-2), max(8, w-4))
+		limit := max(1, available-2)
+		rows := m.logLines(limit, max(8, w-4))
+		if m.page == 5 && strings.HasPrefix(m.detailTitle, "MCP CATALOG / ") && limit >= 4 {
+			rows = append([]string{muted.Render("[Esc] Return to catalog to use [a] configured / [p] profiles"), ""}, m.logLines(limit-2, max(8, w-4))...)
+		}
 		b.WriteString(frame(m.detailTitle+"  (Esc to close)", rows, w, available))
 	case m.showItem:
 		b.WriteString(frame("DETAILS  (Enter/Esc to return)", m.details(w-4), w, available))

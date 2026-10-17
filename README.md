@@ -71,12 +71,12 @@ No Docker state is modified during startup or by browsing dashboards. The first 
 | `y` / `n` | Confirm or cancel a state change |
 | `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
-| `a` | MCP tab: toggle configured servers across profiles (read-only) |
-| `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution) |
+| `a` | MCP tab: toggle configured servers across profiles (read-only); close an inspection with `Esc` first |
+| `Enter` on MCP server | Inspect catalog metadata and advertised tool names (no gateway execution); `Esc` returns to the catalog |
 | `?` | Show help; `Esc` closes prompts or details |
 | `q`, `Ctrl+C` | Exit |
 
-Search on the MCP page is local and does not re-fetch the full catalog on every keystroke. To access MCP browsing, prepare the catalog separately:
+MCP inspection is a modal view: press `Esc` to return to the catalog before using `p` or `a`. The footer changes with the active view so unavailable actions aren't presented as active. Search on the MCP page is local and does not re-fetch the full catalog on every keystroke. To access MCP browsing, prepare the catalog separately:
 
 ```bash
 docker mcp --help
