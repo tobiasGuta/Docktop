@@ -15,6 +15,8 @@ type MCPToolPlanResult struct {
  Attempted string
  After MCPPermissionView
  Err error
+ FailureKind string // blocked (no write attempted), uncertain (write attempted, result not verified)
+ WritesAttempted int
 }
 
 // MCPApplyToolPlan revalidates both profile membership and every observed
@@ -23,7 +25,11 @@ type MCPToolPlanResult struct {
 // Callers MUST show this partial-application limitation before approval.
 func (c Client) MCPApplyToolPlan(ctx context.Context, profile, server string, expected MCPPermissionView, changes []MCPToolChange) MCPToolPlanResult {
  result:=MCPToolPlanResult{}
- fail:=func(err error) MCPToolPlanResult {result.Err=err;return result}
+ fail:=func(err error) MCPToolPlanResult {
+  result.Err=err
+  if result.WritesAttempted>0 {result.FailureKind="uncertain"} else {result.FailureKind="blocked"}
+  return result
+ }
  if !identifier(profile)||!identifier(server)||expected.Profile!=profile||expected.Server!=server {
   return fail(errors.New("invalid tool plan target"))
  }
@@ -44,15 +50,29 @@ func (c Client) MCPApplyToolPlan(ctx context.Context, profile, server string, ex
  sorted:=append([]MCPToolChange(nil),changes...)
  sort.Slice(sorted,func(i,j int)bool{return sorted[i].Tool<sorted[j].Tool})
  for _,change:=range sorted {
+  // A previous step may have changed the policy, or another actor may have
+  // modified it. Compare the COMPLETE current policy immediately before
+  // every write, not only the selected tool. This is best-effort: Docker MCP
+  // does not expose compare-and-swap, so cross-process TOCTOU remains.
+  latest,err:=c.MCPReadPermissions(ctx,profile,server)
+  if err!=nil{return fail(fmt.Errorf("cannot read current policy before %s: %w",change.Tool,err))}
+  if err:=sameMCPPolicy(current,latest);err!=nil {
+   return fail(fmt.Errorf("policy changed before %s: %w",change.Tool,err))
+  }
+  if err:=c.requireMCPMember(ctx,profile,server);err!=nil {
+   return fail(fmt.Errorf("membership changed before %s: %w",change.Tool,err))
+  }
   result.Attempted=change.Tool
-  // This method repeats membership and state checks immediately before CLI mutation.
+  // Once dispatch begins, an error (including cancellation) cannot prove
+  // Docker did not apply it. Preserve that uncertainty in the result.
+  result.WritesAttempted++
   if err:=c.MCPSetSpecificTool(ctx,profile,server,change.Tool,change.Enable);err!=nil {
-   return fail(fmt.Errorf("tool change may not have completed for %s: %w",change.Tool,err))
+   return fail(fmt.Errorf("tool write may not have completed for %s: %w",change.Tool,err))
   }
   after,err:=c.MCPReadPermissions(ctx,profile,server)
-  if err!=nil{return fail(fmt.Errorf("change command succeeded for %s but readback failed: %w",change.Tool,err))}
+  if err!=nil{return fail(fmt.Errorf("tool command succeeded for %s but readback failed: %w",change.Tool,err))}
   if err:=changedMCPPolicy(current,after,change.Tool,change.Enable);err!=nil {
-   return fail(fmt.Errorf("change command succeeded for %s but verification failed: %w",change.Tool,err))
+   return fail(fmt.Errorf("tool command succeeded for %s but readback did not match: %w",change.Tool,err))
   }
   result.Verified=append(result.Verified,change.Tool)
   result.After=after
