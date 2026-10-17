@@ -60,7 +60,7 @@ func (m Model) catalogAddFooter() string {
 	case "loading", "checking", "saving":
 		return "[Wait] Checking MCP state  •  no other actions available"
 	case "choose":
-		return "[↑↓] Select profile  [Enter] Review assignment  [Esc] Cancel"
+		return "[Esc] Cancel  [↑↓] Select profile  [Enter] Review"
 	case "review":
 		return "[y] Add server to profile  [n/Esc] Cancel"
 	case "complete":
