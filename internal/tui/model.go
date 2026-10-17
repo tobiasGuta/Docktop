@@ -457,6 +457,9 @@ func (m Model) statusLine(w int) string {
 	return muted.Render(plain(label, w))
 }
 func (m Model) navigation(w int) string {
+	if w < 52 {
+		return selectedStyle.Render(fmt.Sprintf(" %d/%d %s ", m.page+1, len(tabs), tabs[m.page])) + muted.Render("  [Tab] next")
+	}
 	names := tabs
 	if w < 95 {
 		names = shortTabs
