@@ -79,7 +79,9 @@ func selectedImageCount(images []Image, target ImageRemovalTarget) (count int, s
 func imageRemovalErrorReason(err error) string {
 	message := strings.ToLower(err.Error())
 	if strings.Contains(message, "container") &&
-		(strings.Contains(message, "is being used by") || strings.Contains(message, "image is in use by")) {
+		(strings.Contains(message, "is being used by") ||
+			strings.Contains(message, "image is in use by") ||
+			strings.Contains(message, "is using its referenced image")) {
 		return "Docker refused removal because an existing container references this image."
 	}
 	return "Docker reported an error while attempting image removal."

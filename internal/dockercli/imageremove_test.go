@@ -139,6 +139,20 @@ func TestImageRemovalErrorReportingAfterReadback(t *testing.T) {
 			wantReason: "existing container",
 		},
 		{
+			name: "Docker container reference conflict",
+			removeErr: errors.New("docker --context: exit status 1: Error response from daemon: conflict: unable to remove repository reference hello-world:latest (must force) - container 566fb4e192fa is using its referenced image 5e2309035332 PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: helloImage,
+			wantOutcome: "not_removed",
+			wantReason: "existing container",
+		},
+		{
+			name: "unrelated error that mentions container",
+			removeErr: errors.New("docker: unknown container option PRIVATE_TOKEN_NOT_FOR_UI"),
+			after: helloImage,
+			wantOutcome: "not_removed",
+			wantReason: "Docker reported an error",
+		},
+		{
 			name: "generic command failure unchanged tag",
 			removeErr: errors.New("unknown flag or permission denied PRIVATE_TOKEN_NOT_FOR_UI"),
 			after: helloImage,
