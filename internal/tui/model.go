@@ -756,7 +756,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, loadLogs(m.client, c.ID, c.Names)
 			}
 		case "d":
-			if m.page == 2 && !m.busy && m.selected >= 0 && m.selected < len(m.snapshot.Images) {
+			if m.page == 2 && m.selected >= 0 && m.selected < len(m.snapshot.Images) {
 				img := m.snapshot.Images[m.selected]
 				target := dockercli.ImageRemovalTarget{Context: m.snapshot.Context, Repository: img.Repository, Tag: img.Tag, ID: img.ID}
 				if err := dockercli.ValidateImageRemovalTarget(target); err != nil {
