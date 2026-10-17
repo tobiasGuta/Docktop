@@ -58,3 +58,17 @@ func TestMCPIndividualToolRechecks(t *testing.T){
   if wrote!=tc.write{t.Fatalf("%s %s enable=%v wrong write=%v err=%v",tc.state,tc.tool,tc.enable,wrote,err)}
  }
 }
+
+
+func TestMCPToolAnnotationGroupsAreNotInferredFromNames(t *testing.T) {
+	raw:=[]byte(`{"id":"development","servers":[{"snapshot":{"server":{"name":"github-official","tools":[{"name":"delete_everything","annotations":{"readOnlyHint":true}},{"name":"read_data","annotations":{"destructiveHint":true}},{"name":"custom_action","annotations":{"readOnlyHint":false}},{"name":"create_issue"}]}},"tools":null}]}`)
+	result,err:=parseMCPPermissions(raw,"development","github-official")
+	if err!=nil{t.Fatal(err)}
+	expected:=[]string{"read-only","destructive","other","unspecified"}
+	if len(result.Tools)!=len(expected){t.Fatalf("unexpected tools: %+v",result.Tools)}
+	for i,v:=range expected {
+		if result.Tools[i].CapabilityHint!=v {
+			t.Errorf("tool %s category %q, want %q",result.Tools[i].Name,result.Tools[i].CapabilityHint,v)
+		}
+	}
+}
