@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/tobiasGuta/Docktop/internal/dockercli"
@@ -59,22 +60,36 @@ func (m Model) compactDashboard(w, h int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, frame("DOCKER METRICS", summary, w, summaryH), "", frame("CONTAINERS", m.list(w-4, max(1, h-summaryH-3)), w, h-summaryH-1))
 }
 
+// historyFootnote distinguishes collected samples from empty chart space.
+// Charts remain right-anchored rather than stretching short histories into
+// fabricated data points.
+func historyFootnote(samples int, unit string) string {
+	count := min(max(0, samples), historyLimit)
+	return fmt.Sprintf("◀ %dm window   •   %d/%d samples   •   latest ▶   •   %s",
+		historyLimit*int(refreshInterval/time.Second)/60, count, historyLimit, unit)
+}
+
 func (m Model) cpuPanel(w, h int) []string {
 	cpu, _ := m.snapshot.TotalUsage()
 	peak := historyPeak(m.cpuHistory)
-	caption := fmt.Sprintf("%s   %.1f%% total   •   peak %.1f%%   •   100%% = 1 CPU core", green.Render("● LIVE"), cpu, peak)
+	caption := fmt.Sprintf("%s  %5.1f%%   %s peak %.1f%%   %s 100%% = one core",
+		green.Render("● LIVE"), cpu, muted.Render("•"), peak, muted.Render("•"))
 	lines := []string{caption}
 	chartH := max(2, h-3)
-	lines = append(lines, plotHistory(m.cpuHistory, max(12, w), chartH, 10, green)...)
-	lines = append(lines, muted.Render("oldest → newest   •   5s/sample   •   local Docker context"))
+	lines = append(lines, plotHistoryTones(m.cpuHistory, max(12, w), chartH, 10, green, graphCPULow, graphCPUMid)...)
+	lines = append(lines, muted.Render(plain(historyFootnote(len(m.cpuHistory), "Docker CPU"), w)))
 	return lines
 }
+
 func (m Model) memoryPanel(w, h int) []string {
 	_, mem := m.snapshot.TotalUsage()
 	current := mem / 1048576
-	lines := []string{fmt.Sprintf("%s  %.1f MiB  •  running containers only", cyan.Render("● LIVE"), current)}
-	lines = append(lines, plotHistory(m.memHistory, max(12, w), max(1, h-3), 64, cyan)...)
-	lines = append(lines, muted.Render("0 MiB  •  recent samples, not host RAM"))
+	lines := []string{fmt.Sprintf("%s   %.1f MiB   %s running containers only",
+		cyan.Render("● LIVE"), current, muted.Render("•"))}
+	// An adaptive memory axis makes small workloads legible. Unlike a fixed
+	// 64-MiB floor it can show 5–30 MiB workloads without flattening them.
+	lines = append(lines, plotHistoryTones(m.memHistory, max(12, w), max(1, h-3), 8, cyan, graphLowerFill, graphMiddleFill)...)
+	lines = append(lines, muted.Render(plain(historyFootnote(len(m.memHistory), "Docker memory"), w)))
 	return lines
 }
 
@@ -130,26 +145,102 @@ func (m Model) enginePanel(w, h int) []string {
 	return trimLines(lines, h)
 }
 
+// hasOnlyZeroSamples requires actual readings; an empty history means
+// "collecting", not "zero". Invalid readings aren't treated as evidence.
+func hasOnlyZeroSamples(samples []float64) bool {
+	if len(samples) == 0 {
+		return false
+	}
+	for _, v := range samples {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (m Model) ioPanel(w, h int) []string {
 	lines := []string{muted.Render("Docker container I/O rates / second")}
 	if !m.ioRates.Ready {
 		return append(lines, "Collecting two matching samples…", muted.Render("No host network/disk telemetry"))
 	}
 	lines = append(lines, fmt.Sprintf("NET   ↓ %-13s ↑ %s", niceBytes(m.ioRates.RX)+"/s", niceBytes(m.ioRates.TX)+"/s"))
-	if h >= 7 {
+	if h >= 7 && hasOnlyZeroSamples(m.rxHistory) {
+		lines = append(lines, muted.Render("  ──  No network activity measured"))
+	} else if h >= 9 {
+		lines = append(lines, plotHistoryTones(m.rxHistory, max(12, w), 2, 1, cyan, graphLowerFill, graphMiddleFill)...)
+	} else if h >= 7 {
 		lines = append(lines, cyan.Render(sparkline(m.rxHistory, max(1, w-3), max(1, historyPeak(m.rxHistory)))))
 	}
 	lines = append(lines, fmt.Sprintf("DISK  R %-13s W %s", niceBytes(m.ioRates.Read)+"/s", niceBytes(m.ioRates.Write)+"/s"))
-	if h >= 8 {
+	if h >= 8 && hasOnlyZeroSamples(m.diskHistory) {
+		lines = append(lines, muted.Render("  ──  No disk activity measured"))
+	} else if h >= 9 {
+		lines = append(lines, plotHistoryTones(m.diskHistory, max(12, w), 2, 1, green, graphCPULow, graphCPUMid)...)
+	} else if h >= 8 {
 		lines = append(lines, green.Render(sparkline(m.diskHistory, max(1, w-3), max(1, historyPeak(m.diskHistory)))))
 	}
-	lines = append(lines, muted.Render("~5s sampling; resets and new IDs skipped"))
+	lines = append(lines, muted.Render("~5s/sample  •  zero activity stays at baseline"))
 	return trimLines(lines, h)
 }
 
+// cpuMeter is an instantaneous per-container CPU bar; it is not a history
+// series. Values are capped at one core only for the bar, not the label.
+func cpuMeter(percent float64, cells int) string {
+	if cells <= 0 {
+		return ""
+	}
+	count := int(math.Round(math.Min(100, math.Max(0, percent)) / 100 * float64(cells)))
+	if percent > 0 && count == 0 {
+		count = 1
+	}
+	return strings.Repeat("▰", count) + strings.Repeat("·", cells-count)
+}
+
+// dashboardRight aligns sanitized terminal-cell strings, not UTF-8 bytes.
+func dashboardRight(value string, width int) string {
+	value = plain(value, max(0, width))
+	return strings.Repeat(" ", max(0, width-lipgloss.Width(value))) + value
+}
+
+func dashboardStateStyle(state string) lipgloss.Style {
+	switch strings.ToLower(state) {
+	case "running":
+		return green
+	case "paused", "restarting", "created":
+		return amber
+	case "dead", "removing":
+		return red
+	default:
+		return muted
+	}
+}
+
+func dashboardStateLabel(state string) string {
+	if state == "" {
+		return "UNKNOWN"
+	}
+	return strings.ToUpper(plain(state, 10))
+}
+
 func (m Model) dashboardContainerRows(w, h int) []string {
+	wide := w >= 80
 	nameWidth := max(8, w-23)
-	rows := []string{muted.Render(plain(padded("CONTAINER", nameWidth)+" CPU      MEMORY", w))}
+	if wide {
+		// Exactly 40 additional terminal cells: status dot, spacing,
+		// state, CPU activity, CPU percent and memory value.
+		nameWidth = w - 40
+	}
+	var heading string
+	if wide {
+		heading = "  " + padded("CONTAINER", nameWidth) + " " +
+			padded("STATE", 10) + " " + padded("CPU LOAD", 8) + " " +
+			dashboardRight("CPU", 7) + " " + dashboardRight("MEMORY", 9)
+	} else {
+		heading = "  " + padded("CONTAINER", nameWidth-2) + " " +
+			dashboardRight("CPU", 7) + " " + dashboardRight("MEMORY", 9)
+	}
+	rows := []string{muted.Render(plain(heading, w))}
 	if len(m.snapshot.Containers) == 0 {
 		return append(rows, muted.Render("No containers in this context"))
 	}
@@ -161,58 +252,129 @@ func (m Model) dashboardContainerRows(w, h int) []string {
 		if u.ID == "" {
 			u = m.snapshot.Stats[c.Names]
 		}
-		cpu := u.CPUPerc
-		if cpu == "" {
-			cpu = "—"
+		cpu, memory := "—", "—"
+		if strings.TrimSpace(u.CPUPerc) != "" {
+			cpu = plain(u.CPUPerc, 7)
 		}
-		memory := u.MemUsage
-		if memory == "" {
-			memory = "—"
+		if strings.TrimSpace(u.MemUsage) != "" {
+			memory = u.MemUsage
+			if before, _, ok := strings.Cut(memory, " /"); ok {
+				memory = before
+			}
 		}
-		if before, _, ok := strings.Cut(memory, " /"); ok {
-			memory = before
-		}
-		nameWidth := max(8, w-23)
 		symbol := "○"
 		if c.State == "running" {
 			symbol = "●"
+		} else if c.State == "paused" || c.State == "restarting" {
+			symbol = "◐"
 		}
-		label := fmt.Sprintf("%s %s %7s %9s", symbol, padded(c.Names, nameWidth-2), padded(cpu, 7), plain(memory, 9))
-		if i == m.selected {
-			rows = append(rows, selectedStyle.Render(padded(label, w)))
-		} else if c.State == "running" {
-			rows = append(rows, plain(label, w))
+		style := dashboardStateStyle(c.State)
+		var row, painted string
+		if wide {
+			meter := strings.Repeat("·", 8)
+			if c.State == "running" && strings.TrimSpace(u.CPUPerc) != "" {
+				meter = cpuMeter(dockercli.Percent(u.CPUPerc), 8)
+			}
+			// Unstyled selected rows keep their continuous, clearly visible
+			// highlight. Other rows use a colored status and live CPU meter.
+			row = symbol + " " + padded(c.Names, nameWidth) + " " +
+				padded(dashboardStateLabel(c.State), 10) + " " + meter + " " +
+				dashboardRight(cpu, 7) + " " + dashboardRight(memory, 9)
+			painted = style.Render(symbol) + " " + padded(c.Names, nameWidth) + " " +
+				style.Render(padded(dashboardStateLabel(c.State), 10)) + " " +
+				green.Render(meter) + " " + dashboardRight(cpu, 7) + " " +
+				dashboardRight(memory, 9)
 		} else {
-			rows = append(rows, muted.Render(plain(label, w)))
+			row = symbol + " " + padded(c.Names, nameWidth-2) + " " +
+				dashboardRight(cpu, 7) + " " + dashboardRight(memory, 9)
+			painted = style.Render(symbol) + " " + padded(c.Names, nameWidth-2) +
+				" " + dashboardRight(cpu, 7) + " " + dashboardRight(memory, 9)
+		}
+		if i == m.selected {
+			rows = append(rows, selectedStyle.Render(padded(row, w)))
+		} else if c.State == "running" {
+			rows = append(rows, painted)
+		} else {
+			rows = append(rows, painted)
 		}
 	}
 	return rows
 }
+
+// detailWithFooter always keeps the existing keyboard controls visible,
+// including when the right panel is compressed to a small terminal height.
+func detailWithFooter(lines []string, footer string, height int) []string {
+	if height <= 0 {
+		return nil
+	}
+	if height == 1 {
+		return []string{footer}
+	}
+	return append(trimLines(lines, height-1), footer)
+}
+
 func (m Model) compactContainerDetails(w, h int) []string {
-	if len(m.snapshot.Containers) == 0 || m.selected >= len(m.snapshot.Containers) {
-		return []string{"Select a container"}
+	if len(m.snapshot.Containers) == 0 || m.selected < 0 || m.selected >= len(m.snapshot.Containers) {
+		return []string{muted.Render("Select a container to inspect")}
 	}
 	c := m.snapshot.Containers[m.selected]
 	u := m.snapshot.Stats[c.ID]
 	if u.ID == "" {
 		u = m.snapshot.Stats[c.Names]
 	}
-	state := red
-	if c.State == "running" {
-		state = green
+	state := dashboardStateStyle(c.State)
+	stateText := dashboardStateLabel(c.State)
+	stateInfo := plain(c.Status, max(1, w-lipgloss.Width(stateText)-4))
+	lines := []string{
+		cyan.Render(plain(c.Names, w)),
+		state.Render("● "+stateText) + "  " + muted.Render(stateInfo),
+		muted.Render("IMAGE  ") + plain(c.Image, max(1, w-7)),
 	}
-	lines := []string{cyan.Render(plain(c.Names, w)), state.Render(strings.ToUpper(c.State)) + "  " + muted.Render(plain(c.Status, max(2, w-14)))}
-	lines = append(lines, fmt.Sprintf("IMAGE  %s", plain(c.Image, max(2, w-8))))
 	if c.Ports != "" {
-		lines = append(lines, "PORTS  "+plain(c.Ports, max(2, w-8)))
+		lines = append(lines, muted.Render("PORTS  ")+plain(c.Ports, max(1, w-7)))
+	} else {
+		lines = append(lines, muted.Render("PORTS  —"))
 	}
-	cpu := dockercli.Percent(u.CPUPerc)
-	lines = append(lines, fmt.Sprintf("CPU    %5.1f%% (1 core = 100%%)", cpu))
-	lines = append(lines, metricBar(cpu, 100, max(3, w-2), green))
-	lines = append(lines, "MEM    "+plain(u.MemUsage, max(1, w-7)))
-	lines = append(lines, muted.Render("[2] manage  [l] logs  [Enter] inspect"))
-	return trimLines(lines, h)
+	if h >= 10 {
+		lines = append(lines, "", cyan.Render("RESOURCES  /  DOCKER STATS"))
+	}
+	cpuText := "—"
+	hasCPU := strings.TrimSpace(u.CPUPerc) != ""
+	if hasCPU {
+		cpuText = plain(u.CPUPerc, 14)
+	}
+	lines = append(lines, "CPU    "+green.Render(cpuText)+"  "+muted.Render("100% = one core"))
+	if h >= 10 {
+		if hasCPU {
+			lines = append(lines, metricBar(dockercli.Percent(u.CPUPerc), 100, max(3, w-2), green))
+		} else {
+			lines = append(lines, muted.Render("Waiting for CPU statistics"))
+		}
+	}
+	memText := "—"
+	hasMemory := strings.TrimSpace(u.MemUsage) != ""
+	if hasMemory {
+		memText = plain(u.MemUsage, max(1, w-7))
+	}
+	lines = append(lines, "MEM    "+cyan.Render(memText))
+	if h >= 11 {
+		if hasMemory {
+			parts := strings.SplitN(u.MemUsage, "/", 2)
+			if len(parts) == 2 {
+				used, limit := dockercli.ByteSize(parts[0]), dockercli.ByteSize(parts[1])
+				if limit > 0 {
+					lines = append(lines, metricBar(used, limit, max(3, w-2), cyan))
+				} else {
+					lines = append(lines, muted.Render("Memory limit unavailable"))
+				}
+			}
+		} else {
+			lines = append(lines, muted.Render("Waiting for memory statistics"))
+		}
+	}
+	return detailWithFooter(lines, muted.Render("[2] manage   [l] logs   [Enter] inspect"), h)
 }
+
 func ioPair(raw string) (float64, float64) {
 	parts := strings.Split(raw, "/")
 	if len(parts) != 2 {
@@ -275,49 +437,3 @@ func niceScale(peak, minimum float64) float64 {
 	return peak
 }
 
-// plotHistory draws accurate, autoscaled vertical bars. The axis shows the
-// actual plotted ceiling (CPU may exceed 100% on multicore workloads).
-func plotHistory(samples []float64, width, height int, minimum float64, color lipgloss.Style) []string {
-	width = max(10, width)
-	height = max(1, height)
-	axis := 9
-	plotWidth := max(1, width-axis)
-	if len(samples) > plotWidth {
-		samples = samples[len(samples)-plotWidth:]
-	}
-	ceiling := niceScale(historyPeak(samples), minimum)
-	out := make([]string, 0, height)
-	for row := 0; row < height; row++ {
-		level := float64(height - row)
-		label := "        "
-		if row == 0 {
-			label = fmt.Sprintf("%7.1f ", ceiling)
-		}
-		if row == height/2 && row != 0 {
-			label = fmt.Sprintf("%7.1f ", ceiling/2)
-		}
-		if row == height-1 {
-			label = "   0.0  "
-		}
-		grid := row > 0 && row < height-1 && (row == height/4 || row == height/2 || row == 3*height/4)
-		var bars strings.Builder
-		blank := " "
-		if grid {
-			blank = "·"
-		}
-		bars.WriteString(strings.Repeat(blank, max(0, plotWidth-len(samples))))
-		for _, raw := range samples {
-			v := math.Max(0, math.Min(ceiling, raw))
-			fraction := v/ceiling*float64(height) - (level - 1)
-			symbols := []rune(" ▁▂▃▄▅▆▇█")
-			index := max(0, min(8, int(math.Ceil(fraction*8))))
-			if index == 0 && grid {
-				bars.WriteString(blank)
-			} else {
-				bars.WriteRune(symbols[index])
-			}
-		}
-		out = append(out, muted.Render(label)+color.Render(bars.String()))
-	}
-	return out
-}

@@ -20,13 +20,13 @@ const catalog = "mcp/docker-mcp-catalog:latest"
 const historyLimit = 60
 
 var (
-	cyan          = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	muted         = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	green         = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	amber         = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	red           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24"))
-	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color("61"))
+	cyan          = lipgloss.NewStyle().Foreground(lipgloss.Color(colorCyan)).Bold(true)
+	muted         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted))
+	green         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGreen))
+	amber         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber))
+	red           = lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Background(lipgloss.Color(colorSelection)).Bold(true)
+	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBorder))
 )
 var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog", "Compose", "Docker Hub"}
 var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"}
@@ -850,6 +850,23 @@ func wrap(value string, width, lines int) []string {
 	}
 	return out
 }
+// panelAccent gives the dashboard panels distinct visual identities without
+// changing their data, commands or layout dimensions.
+func panelAccent(title string) lipgloss.Style {
+	switch {
+	case strings.HasPrefix(title, "CPU"):
+		return green
+	case strings.HasPrefix(title, "MEMORY"):
+		return cyan
+	case strings.HasPrefix(title, "NETWORK"), strings.HasPrefix(title, "Docker Hub"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorViolet)).Bold(true)
+	case strings.HasPrefix(title, "CONTAINERS"):
+		return green
+	default:
+		return cyan
+	}
+}
+
 func frame(title string, content []string, width, height int) string {
 	width = max(12, width)
 	height = max(3, height)
@@ -857,7 +874,7 @@ func frame(title string, content []string, width, height int) string {
 	title = plain(title, max(0, inner-3))
 	used := lipgloss.Width(title) + 2
 	var b strings.Builder
-	b.WriteString(edge.Render("╭─ ") + cyan.Render(title) + edge.Render(strings.Repeat("─", max(0, inner-used))+"╮") + "\n")
+	b.WriteString(edge.Render("╭─ ") + panelAccent(title).Render(title) + edge.Render(strings.Repeat("─", max(0, inner-used))+"╮") + "\n")
 	for i := 0; i < height-2; i++ {
 		line := ""
 		if i < len(content) {
@@ -873,7 +890,9 @@ func frame(title string, content []string, width, height int) string {
 		}
 	}
 	b.WriteString("\n" + edge.Render("╰"+strings.Repeat("─", inner)+"╯"))
-	return b.String()
+	// A single surrounding Lip Gloss background can be reset by embedded
+	// colored spans. Paint every row and restore its surface after resets.
+	return paintPanelRows(b.String())
 }
 func sparkline(samples []float64, cells int, minCeiling float64) string {
 	if cells <= 0 {
@@ -898,64 +917,139 @@ func sparkline(samples []float64, cells int, minCeiling float64) string {
 	}
 	return b.String()
 }
+// header keeps Docktop's identity visually distinct from container workload
+// readings. All data remains read-only and comes from the current snapshot.
 func (m Model) header(w int) string {
-	title := cyan.Render("◆ DOCKTOP") + "  " + muted.Render("ENGINE / MCP")
-	if w < 80 {
+	brand := cyan.Render("◆ DOCKTOP")
+	subtitle := muted.Render("  │  ENGINE / MCP")
+	title := brand + subtitle
+	if w < 78 {
 		return title
 	}
-	cpu, mem := m.snapshot.TotalUsage()
-	stats := fmt.Sprintf("CPU %.1f%%  MEM %.1f MiB", cpu, mem/1048576)
-	gap := max(1, w-lipgloss.Width(title)-lipgloss.Width(stats)-1)
-	return title + strings.Repeat(" ", gap) + green.Render(stats)
+	var workload string
+	if m.snapshot.Context == "" || len(m.snapshot.Stats) == 0 {
+		workload = muted.Render("DOCKER WORKLOAD") + "  " + muted.Render("CPU —  MEM —")
+	} else {
+		cpu, memory := m.snapshot.TotalUsage()
+		workload = muted.Render("DOCKER WORKLOAD") + "  " +
+			green.Render(fmt.Sprintf("CPU %.1f%%", cpu)) + "  " +
+			cyan.Render(fmt.Sprintf("MEM %.1f MiB", memory/1048576))
+	}
+	if w < 115 {
+		// With a smaller window, drop the extra label before abbreviating
+		// useful numbers or sacrificing the application name.
+		if m.snapshot.Context == "" || len(m.snapshot.Stats) == 0 {
+			workload = muted.Render("CPU —  MEM —")
+		} else {
+			cpu, memory := m.snapshot.TotalUsage()
+			workload = green.Render(fmt.Sprintf("CPU %.1f%%", cpu)) + "  " +
+				cyan.Render(fmt.Sprintf("MEM %.1f MiB", memory/1048576))
+		}
+	}
+	gap := w - lipgloss.Width(title) - lipgloss.Width(workload)
+	if gap < 2 {
+		return title
+	}
+	return title + strings.Repeat(" ", gap) + workload
 }
+
+// statusLine distinguishes a busy polling cycle from Docker connectivity and
+// retains query timings without ever displaying raw Docker CLI errors.
 func (m Model) statusLine(w int) string {
+	var status string
+	switch {
+	case m.snapshot.Context == "":
+		status = muted.Render("○ CONNECTING")
+	case m.busy:
+		status = amber.Render("◌ SYNCING")
+	default:
+		status = green.Render("● READY")
+	}
 	ctx := m.snapshot.Context
 	if ctx == "" {
-		ctx = "connecting"
+		ctx = "—"
 	}
-	label := "context: " + ctx
-	if m.busy {
-		label += "  •  syncing"
-	} else {
-		label += "  •  ready"
+	contextLabel := muted.Render("CTX ") + cyan.Render(plain(ctx, max(1, min(34, w-22))))
+	line := status + muted.Render("  │  ") + contextLabel
+	appendIfFits := func(extra string) {
+		if lipgloss.Width(line)+lipgloss.Width(extra) <= w {
+			line += extra
+		}
 	}
-	if !m.snapshot.Updated.IsZero() {
-		label += "  •  last scan " + m.snapshot.Updated.Format("15:04:05")
+	if w >= 80 && !m.snapshot.Updated.IsZero() {
+		appendIfFits(muted.Render("  •  SCAN "+m.snapshot.Updated.Format("15:04:05")))
 	}
 	if w >= 125 && len(m.snapshot.QueryTimings) > 0 {
 		step, duration := m.snapshot.SlowestQuery()
-		label += fmt.Sprintf("  •  poll %dms (slow: %s %dms)",
-			m.snapshot.Duration.Milliseconds(), step, duration.Milliseconds())
+		query := fmt.Sprintf("  •  poll %dms (slow: %s %dms)",
+			m.snapshot.Duration.Milliseconds(), plain(step, 16), duration.Milliseconds())
+		appendIfFits(muted.Render(query))
 	}
-	return muted.Render(plain(label, w))
+	return line
 }
-func (m Model) navigation(w int) string {
-	// Keep navigation within the real terminal width even with eight tabs.
-	if w < 75 {
-		current := fmt.Sprintf(" %d:%s ", m.page+1, shortTabs[m.page])
-		hint := plain("  Tab: next  Shift+Tab: previous  1–8: views", max(0, w-lipgloss.Width(current)))
-		return selectedStyle.Render(current) + muted.Render(hint)
-	}
-	names := tabs
-	if w < 130 {
-		names = shortTabs
-	}
+
+// Styled navigation pills, kept independent of the Docker management
+// handlers. Category separators help users distinguish Engine operations
+// from MCP/Compose/Hub exploration.
+var (
+	activeNavTab = lipgloss.NewStyle().
+		Foreground(lipgloss.Color(colorCanvas)).
+		Background(lipgloss.Color(colorCyan)).
+		Bold(true)
+	inactiveNavNumber = lipgloss.NewStyle().Foreground(lipgloss.Color(colorCyan))
+)
+
+func (m Model) navigationSet(names []string, categories bool) string {
 	var b strings.Builder
 	for i, label := range names {
-		item := fmt.Sprintf(" %d:%s ", i+1, label)
+		if categories && (i == 0 || i == 5) {
+			if i == 5 {
+				b.WriteString(muted.Render("  │  "))
+			}
+			category := "ENGINE "
+			if i == 5 {
+				category = "TOOLS "
+			}
+			b.WriteString(muted.Render(category))
+		}
+		if !categories && i > 0 {
+			b.WriteString(" ")
+		}
 		if i == m.page {
-			b.WriteString(selectedStyle.Render(item))
+			b.WriteString(activeNavTab.Render(fmt.Sprintf(" %d %s ", i+1, label)))
 		} else {
-			b.WriteString(muted.Render(item))
+			b.WriteString(" ")
+			b.WriteString(inactiveNavNumber.Render(fmt.Sprintf("%d", i+1)))
+			b.WriteString(muted.Render(" "+label+" "))
 		}
 	}
-	return plainStyledNavigation(b.String(), w)
+	return b.String()
 }
-func plainStyledNavigation(value string, w int) string {
-	if lipgloss.Width(value) <= w {
-		return value
+
+func (m Model) navigation(w int) string {
+	// Select the most informative complete view that actually fits; never
+	// replace all eight tabs with a generic fallback on intermediate widths.
+	for _, choice := range []struct {
+		names      []string
+		categories bool
+	}{
+		{tabs, true},
+		{shortTabs, true},
+		{shortTabs, false},
+	} {
+		row := m.navigationSet(choice.names, choice.categories)
+		if lipgloss.Width(row) <= w {
+			return row
+		}
 	}
-	return selectedStyle.Render(" " + plain("Docktop / use 1–8 or Tab to switch", w-2) + " ")
+	// Small terminals still show the active page and real navigation hints.
+	current := activeNavTab.Render(fmt.Sprintf(" %d %s ", m.page+1, shortTabs[m.page]))
+	hint := "  Tab next  •  1–8 views"
+	available := w - lipgloss.Width(current)
+	if available < 1 {
+		return current
+	}
+	return current + muted.Render(plain(hint, available))
 }
 func (m Model) footer(w int) string {
 	// Modal and text-entry shortcuts take precedence over page-level shortcuts.
@@ -1076,7 +1170,9 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 	b.WriteString(m.footer(w))
-	return b.String()
+	// Keep the entire screen visually stable even when the terminal emulator
+	// itself is configured for transparency. This is presentation-only.
+	return paintCanvas(b.String(), w, h)
 }
 func (m Model) logLines(limit, width int) []string {
 	lines := strings.Split(dockercli.Clean(m.detailText, 18000), "\n")

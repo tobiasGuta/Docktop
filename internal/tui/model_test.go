@@ -192,16 +192,38 @@ func TestDockerIORatesAndResetAcrossContexts(t *testing.T) {
 	}
 }
 
-func TestFrameInheritsTerminalBackground(t *testing.T) {
-	// Ordinary panel rows should not force an ANSI background color.
-	// Highlighted selected rows are intentionally styled separately.
-	rendered := frame("Transparent", []string{"plain", cyan.Render("accent")}, 40, 6)
-	if strings.Contains(rendered, "\x1b[48;") || strings.Contains(rendered, "\x1b[40m") {
-		t.Fatalf("panel applies an explicit background: %q", rendered)
+func TestFramePaintsBackgroundAndPreservesAlignment(t *testing.T) {
+	rendered := frame("Opaque", []string{"plain", cyan.Render("accent")}, 40, 6)
+	// Headless CI deliberately strips ANSI colors, so inspect the configured
+	// surface style instead of requiring an emitted escape sequence.
+	if panelSurface.GetBackground() == nil {
+		t.Fatal("panel has no configured background")
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if lipgloss.Width(line) != 40 {
 			t.Fatalf("frame lost alignment: width=%d", lipgloss.Width(line))
+		}
+	}
+}
+
+func TestDarkCanvasFillsViewportAndKeepsResponsiveLayout(t *testing.T) {
+	for _, size := range [][2]int{{172, 52}, {110, 32}, {82, 24}, {50, 16}, {30, 10}} {
+		m := testModel()
+		m.width, m.height = size[0], size[1]
+		for _, page := range []int{0, 1, 2, 5, 6, 7} {
+			m.page = page
+			rendered := m.View()
+			if canvasSurface.GetBackground() == nil {
+				t.Fatalf("page %d at %v has no configured canvas background", page, size)
+			}
+			if lipgloss.Height(rendered) != m.height {
+				t.Fatalf("page %d at %v height %d != viewport %d", page, size, lipgloss.Height(rendered), m.height)
+			}
+			for i, line := range strings.Split(rendered, "\n") {
+				if lipgloss.Width(line) > m.width {
+					t.Fatalf("page %d at %v row %d exceeds viewport: %d", page, size, i, lipgloss.Width(line))
+				}
+			}
 		}
 	}
 }
@@ -407,6 +429,252 @@ func TestSnapshotTimingStatusAtWideTerminalOnly(t *testing.T) {
 	for _, line := range strings.Split(m.View(), "\n") {
 		if lipgloss.Width(line) > 172 {
 			t.Fatalf("timings overflowed terminal: %q", line)
+		}
+	}
+}
+
+
+func TestPanelReassertsBackgroundAfterEmbeddedANSIResets(t *testing.T) {
+	// Simulate colorful UI spans that reset a terminal's background to its
+	// default transparency, and a selected row with an intentional highlight.
+	raw := "normal\x1b[0m spaces \x1b[48;2;38;81;107mselected\x1b[0m tail\x1b[49m end"
+	painted := paintPanelRows(raw)
+	if !strings.HasPrefix(painted, panelBackgroundSGR) ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+panelForegroundSGR+" spaces") ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+panelForegroundSGR+" tail") ||
+		!strings.Contains(painted, "\x1b[49m"+panelBackgroundSGR+" end") ||
+		!strings.HasSuffix(painted, resetBackgroundSGR) {
+		t.Fatalf("panel background lost around nested ANSI resets: %q", painted)
+	}
+	if !strings.Contains(painted, "\x1b[48;2;38;81;107mselected") {
+		t.Fatal("selection highlight was overridden")
+	}
+}
+
+func TestCanvasReassertsBackgroundAfterPanelExit(t *testing.T) {
+	panel := paintPanelRows("some\x1b[0m text")
+	view := paintCanvas("header\n"+panel+"\nfooter", 50, 10)
+	if !strings.Contains(view, resetBackgroundSGR+canvasBackgroundSGR) {
+		t.Fatalf("canvas background not restored after panel exit: %q", view)
+	}
+	if !strings.Contains(view, "\x1b[0m"+canvasBackgroundSGR+panelBackgroundSGR) {
+		t.Fatalf("panel background not restored after styled text: %q", view)
+	}
+	if lipgloss.Height(view) != 10 {
+		t.Fatalf("canvas height lost: %d", lipgloss.Height(view))
+	}
+}
+
+func TestDashboardHistoryFootnoteDoesNotInventSamples(t *testing.T) {
+	got := historyFootnote(7, "Docker CPU")
+	if !strings.Contains(got, "7/60 samples") || !strings.Contains(got, "5m window") {
+		t.Fatalf("short history was misrepresented: %q", got)
+	}
+	if got := historyFootnote(500, "Docker CPU"); !strings.Contains(got, "60/60 samples") {
+		t.Fatalf("history should cap at its bounded buffer: %q", got)
+	}
+}
+
+func TestDashboardCPUMetersAndLongNamesStayWithinPanel(t *testing.T) {
+	if got := cpuMeter(0, 8); got != "········" {
+		t.Fatalf("zero CPU meter: %q", got)
+	}
+	if got := cpuMeter(0.5, 8); got != "▰·······" {
+		t.Fatalf("low but nonzero CPU meter: %q", got)
+	}
+	if got := cpuMeter(250, 8); got != "▰▰▰▰▰▰▰▰" {
+		t.Fatalf("multicore CPU meter: %q", got)
+	}
+	for _, width := range []int{42, 65, 75, 110} {
+		m := testModel()
+		m.snapshot.Containers[0].Names = "database-production-name-exceeding-available-space-to-prove-truncation-is-safe"
+		m.snapshot.Stats["0123456789abcdef"] = dockercli.Usage{
+			ID: "0123456789abcdef", CPUPerc: "127.8%", MemUsage: "15.75MiB / 32GiB",
+		}
+		for _, row := range m.dashboardContainerRows(width, 5) {
+			if got := lipgloss.Width(row); got > width {
+				t.Fatalf("width %d rendered %d cells: %q", width, got, row)
+			}
+		}
+	}
+}
+
+func TestMemoryGraphAutoscaleUsesActualHistory(t *testing.T) {
+	m := testModel()
+	m.memHistory = []float64{12, 22, 44.3}
+	lines := m.memoryPanel(70, 10)
+	text := strings.Join(lines, " ")
+	if !strings.Contains(text, "50.0") {
+		t.Fatalf("memory graph did not scale near actual values: %q", text)
+	}
+	if !strings.Contains(text, "3/60 samples") {
+		t.Fatalf("memory graph did not disclose partial history: %q", text)
+	}
+}
+
+func TestDashboardContainerStatesAndNoInventedUsage(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers = append(m.snapshot.Containers,
+		dockercli.Container{ID:"stopped",Names:"old-job",State:"exited",Status:"Exited (0)"},
+		dockercli.Container{ID:"paused",Names:"suspended",State:"paused",Status:"Paused"},
+	)
+	m.selected = 0
+	rows := m.dashboardContainerRows(100, 6)
+	if len(rows) != 4 || !strings.Contains(rows[0], "STATE") || !strings.Contains(rows[0], "CPU LOAD") {
+		t.Fatalf("missing wide headers: %q", rows)
+	}
+	if !strings.Contains(rows[2], "EXITED") || !strings.Contains(rows[2], "—") || !strings.Contains(rows[3], "PAUSED") {
+		t.Fatalf("stopped/paused states or unavailable metrics lost: %q", rows)
+	}
+	if !strings.Contains(rows[1], "database-production") {
+		t.Fatal("selected container was lost")
+	}
+	for _, width := range []int{42,65,80,95,110} {
+		for _, row := range m.dashboardContainerRows(width, 6) {
+			if actual := lipgloss.Width(row); actual > width {
+				t.Fatalf("container row overflow at %d (%d): %q", width, actual, row)
+			}
+		}
+	}
+}
+
+func TestSelectedContainerDetailsReadableAndFooterPreserved(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers[0].Ports = "127.0.0.1:55432->5432/tcp"
+	m.snapshot.Stats["0123456789abcdef"] = dockercli.Usage{
+		ID:"0123456789abcdef",CPUPerc:"2.4%",MemUsage:"18.2MiB / 31GiB",
+	}
+	for _, h := range []int{1, 4, 7, 8, 10, 11, 15} {
+		lines := m.compactContainerDetails(56,h)
+		if len(lines) > h {
+			t.Fatalf("details height %d overflowed with %d lines",h,len(lines))
+		}
+		if !strings.Contains(lines[len(lines)-1], "[Enter] inspect") {
+			t.Fatalf("details height %d lost keyboard controls: %q",h,lines)
+		}
+		for _,line := range lines {
+			if width:=lipgloss.Width(line);width>56 {
+				t.Fatalf("details width exceeded: %d cells: %q",width,line)
+			}
+		}
+	}
+	m.snapshot.Stats = map[string]dockercli.Usage{}
+	lines := strings.Join(m.compactContainerDetails(56,12)," ")
+	if !strings.Contains(lines, "Waiting for CPU statistics") ||
+		!strings.Contains(lines, "Waiting for memory statistics") {
+		t.Fatalf("unavailable data displayed as measured zero: %q",lines)
+	}
+}
+
+func TestSelectedContainerDetailsSanitizeHostileNames(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers[0].Names="normal\x1b[2Junexpected"
+	m.snapshot.Containers[0].Image="image\x1b[31mbad"
+	m.snapshot.Containers[0].Status="Up\x1b[0m"
+	lines:=strings.Join(m.compactContainerDetails(45,12)," ")
+	if strings.Contains(lines,"[2J") || strings.Contains(lines,"[31m") {
+		t.Fatalf("untrusted Docker text included terminal control: %q",lines)
+	}
+}
+
+
+func TestPolishedNavigationAlwaysPreservesSelectedTab(t *testing.T) {
+	for _, width := range []int{30, 50, 74, 75, 90, 110, 129, 130, 172} {
+		for page := 0; page < 8; page++ {
+			m := testModel()
+			m.page = page
+			line := m.navigation(width)
+			if lipgloss.Width(line) > width {
+				t.Fatalf("navigation width %d page %d overflow: %d", width, page, lipgloss.Width(line))
+			}
+			label := tabs[page]
+			short := shortTabs[page]
+			if !strings.Contains(line, label) && !strings.Contains(line, short) {
+				t.Fatalf("navigation width %d lost active page %d: %q", width, page, line)
+			}
+		}
+	}
+	m := testModel()
+	m.page = 7
+	if line := m.navigation(172); !strings.Contains(line, "ENGINE") || !strings.Contains(line, "TOOLS") ||
+		!strings.Contains(line, "Docker Hub") || !strings.Contains(line, "Dashboard") {
+		t.Fatalf("wide navigation lost grouping or tabs: %q", line)
+	}
+}
+
+func TestPolishedHeaderAndStatusReflectSnapshotWithoutFakeMetrics(t *testing.T) {
+	m := testModel()
+	m.busy = false // New() starts in the initial syncing state.
+	m.snapshot.Updated = time.Date(2026, 10, 17, 21, 45, 0, 0, time.UTC)
+	m.snapshot.Duration = 2100 * time.Millisecond
+	m.snapshot.QueryTimings = []dockercli.QueryTiming{
+		{Step: "context", Duration: time.Millisecond},
+		{Step: "stats", Duration: 2040 * time.Millisecond},
+	}
+	for _, width := range []int{30, 55, 80, 110, 125, 172} {
+		if got := lipgloss.Width(m.header(width)); got > width {
+			t.Fatalf("header %d overflow: %d", width, got)
+		}
+		if got := lipgloss.Width(m.statusLine(width)); got > width {
+			t.Fatalf("status %d overflow: %d", width, got)
+		}
+	}
+	if got := m.statusLine(172); !strings.Contains(got, "READY") ||
+		!strings.Contains(got, "CTX") || !strings.Contains(got, "poll 2100ms") ||
+		!strings.Contains(got, "slow: stats 2040ms") {
+		t.Fatalf("wide status omitted important detail: %q", got)
+	}
+	if got := m.header(172); !strings.Contains(got, "DOCKER WORKLOAD") || !strings.Contains(got, "CPU 2.5%") {
+		t.Fatalf("header incorrectly names metrics: %q", got)
+	}
+	m.snapshot.Context = ""
+	m.snapshot.Stats = nil
+	if got := m.header(172); !strings.Contains(got, "CPU —") {
+		t.Fatalf("unknown resource readings shown as zero: %q", got)
+	}
+	if got := m.statusLine(172); !strings.Contains(got, "CONNECTING") {
+		t.Fatalf("missing context not indicated: %q", got)
+	}
+	m.snapshot.Context = "default"
+	m.busy = true
+	if got := m.statusLine(172); !strings.Contains(got, "SYNCING") {
+		t.Fatalf("refresh indicator missing: %q", got)
+	}
+}
+
+func TestStatusSanitizesUntrustedLongContextAtSmallWidths(t *testing.T) {
+	m := testModel()
+	m.snapshot.Context = strings.Repeat("long-remote-context-", 12) + "\x1b[2Jsecret"
+	for _, width := range []int{30, 50, 80, 115, 172} {
+		line := m.statusLine(width)
+		if lipgloss.Width(line) > width || strings.Contains(line, "[2J") || strings.Contains(line, "secret") {
+			t.Fatalf("unsafe or oversized context at %d: %q", width, line)
+		}
+	}
+}
+
+func TestOptimizedPaintPreservesTruecolorPanelInterior(t *testing.T) {
+	p := frame("STYLED", []string{cyan.Render("cyan")+" unstyled", selectedStyle.Render("SELECTED")}, 35, 7)
+	for _, line := range strings.Split(p, "\n") {
+		if !strings.HasPrefix(line, panelBackgroundSGR+panelForegroundSGR) {
+			t.Fatalf("panel row lost painted foreground/background: %q", line)
+		}
+		if lipgloss.Width(line) != 35 {
+			t.Fatalf("frame width changed: %d", lipgloss.Width(line))
+		}
+	}
+	m := testModel()
+	m.width, m.height = 172, 52
+	for page := 0; page < 8; page++ {
+		m.page = page
+		v := m.View()
+		if lipgloss.Height(v) != m.height {
+			t.Fatalf("page %d viewport height changed: %d", page, lipgloss.Height(v))
+		}
+		for n, line := range strings.Split(v, "\n") {
+			if lipgloss.Width(line) != m.width || !strings.HasPrefix(line, canvasBackgroundSGR) {
+				t.Fatalf("page %d row %d not fully painted: width %d",page,n,lipgloss.Width(line))
+			}
 		}
 	}
 }
