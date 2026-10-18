@@ -29,6 +29,8 @@ var (
 	panelSurface   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Background(lipgloss.Color(colorPanel))
 	graphLowerFill  = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGraphLow))
 	graphMiddleFill = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGraphMid))
+	graphCPULow     = lipgloss.NewStyle().Foreground(lipgloss.Color("#28564F"))
+	graphCPUMid     = lipgloss.NewStyle().Foreground(lipgloss.Color("#349C83"))
 )
 
 // Lip Gloss applies the desired background around a rendered block, but color

@@ -76,7 +76,7 @@ func (m Model) cpuPanel(w, h int) []string {
 		green.Render("● LIVE"), cpu, muted.Render("•"), peak, muted.Render("•"))
 	lines := []string{caption}
 	chartH := max(2, h-3)
-	lines = append(lines, plotHistory(m.cpuHistory, max(12, w), chartH, 10, green)...)
+	lines = append(lines, plotHistoryTones(m.cpuHistory, max(12, w), chartH, 10, green, graphCPULow, graphCPUMid)...)
 	lines = append(lines, muted.Render(plain(historyFootnote(len(m.cpuHistory), "Docker CPU"), w)))
 	return lines
 }
@@ -88,7 +88,7 @@ func (m Model) memoryPanel(w, h int) []string {
 		cyan.Render("● LIVE"), current, muted.Render("•"))}
 	// An adaptive memory axis makes small workloads legible. Unlike a fixed
 	// 64-MiB floor it can show 5–30 MiB workloads without flattening them.
-	lines = append(lines, plotHistory(m.memHistory, max(12, w), max(1, h-3), 8, cyan)...)
+	lines = append(lines, plotHistoryTones(m.memHistory, max(12, w), max(1, h-3), 8, cyan, graphLowerFill, graphMiddleFill)...)
 	lines = append(lines, muted.Render(plain(historyFootnote(len(m.memHistory), "Docker memory"), w)))
 	return lines
 }
@@ -151,14 +151,18 @@ func (m Model) ioPanel(w, h int) []string {
 		return append(lines, "Collecting two matching samples…", muted.Render("No host network/disk telemetry"))
 	}
 	lines = append(lines, fmt.Sprintf("NET   ↓ %-13s ↑ %s", niceBytes(m.ioRates.RX)+"/s", niceBytes(m.ioRates.TX)+"/s"))
-	if h >= 7 {
+	if h >= 9 {
+		lines = append(lines, plotHistoryTones(m.rxHistory, max(12, w), 2, 1, cyan, graphLowerFill, graphMiddleFill)...)
+	} else if h >= 7 {
 		lines = append(lines, cyan.Render(sparkline(m.rxHistory, max(1, w-3), max(1, historyPeak(m.rxHistory)))))
 	}
 	lines = append(lines, fmt.Sprintf("DISK  R %-13s W %s", niceBytes(m.ioRates.Read)+"/s", niceBytes(m.ioRates.Write)+"/s"))
-	if h >= 8 {
+	if h >= 9 {
+		lines = append(lines, plotHistoryTones(m.diskHistory, max(12, w), 2, 1, green, graphCPULow, graphCPUMid)...)
+	} else if h >= 8 {
 		lines = append(lines, green.Render(sparkline(m.diskHistory, max(1, w-3), max(1, historyPeak(m.diskHistory)))))
 	}
-	lines = append(lines, muted.Render("~5s sampling; resets and new IDs skipped"))
+	lines = append(lines, muted.Render("~5s/sample  •  zero activity stays at baseline"))
 	return trimLines(lines, h)
 }
 
@@ -322,57 +326,3 @@ func niceScale(peak, minimum float64) float64 {
 	return peak
 }
 
-// plotHistory draws accurate, autoscaled vertical bars. The axis shows the
-// actual plotted ceiling (CPU may exceed 100% on multicore workloads).
-func plotHistory(samples []float64, width, height int, minimum float64, color lipgloss.Style) []string {
-	width = max(10, width)
-	height = max(1, height)
-	axis := 9
-	plotWidth := max(1, width-axis)
-	if len(samples) > plotWidth {
-		samples = samples[len(samples)-plotWidth:]
-	}
-	ceiling := niceScale(historyPeak(samples), minimum)
-	out := make([]string, 0, height)
-	for row := 0; row < height; row++ {
-		level := float64(height - row)
-		label := "        "
-		if row == 0 {
-			label = fmt.Sprintf("%7.1f ", ceiling)
-		}
-		if row == height/2 && row != 0 {
-			label = fmt.Sprintf("%7.1f ", ceiling/2)
-		}
-		if row == height-1 {
-			label = "   0.0  "
-		}
-		grid := row > 0 && row < height-1 && (row == height/4 || row == height/2 || row == 3*height/4)
-		var bars strings.Builder
-		blank := " "
-		if grid {
-			blank = "·"
-		}
-		bars.WriteString(strings.Repeat(blank, max(0, plotWidth-len(samples))))
-		for _, raw := range samples {
-			v := math.Max(0, math.Min(ceiling, raw))
-			fraction := v/ceiling*float64(height) - (level - 1)
-			symbols := []rune(" ▁▂▃▄▅▆▇█")
-			index := max(0, min(8, int(math.Ceil(fraction*8))))
-			if index == 0 && grid {
-				bars.WriteString(blank)
-			} else {
-				bars.WriteRune(symbols[index])
-			}
-		}
-		// Three shades of the same chart family give the bars depth without
-		// changing the plotted values or increasing the sample count.
-		fill := color
-		if row >= height*2/3 {
-			fill = graphLowerFill
-		} else if row >= height/3 {
-			fill = graphMiddleFill
-		}
-		out = append(out, muted.Render(label)+fill.Render(bars.String()))
-	}
-	return out
-}
