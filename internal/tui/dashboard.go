@@ -317,7 +317,13 @@ func plotHistory(samples []float64, width, height int, minimum float64, color li
 				bars.WriteRune(symbols[index])
 			}
 		}
-		out = append(out, muted.Render(label)+color.Render(bars.String()))
+		// Subtle lower-half fill keeps graphs legible while putting the vivid
+		// accent color on peaks, closer to btop-style visual hierarchy.
+		fill := color
+		if row > height/2 {
+			fill = graphLowerFill
+		}
+		out = append(out, muted.Render(label)+fill.Render(bars.String()))
 	}
 	return out
 }

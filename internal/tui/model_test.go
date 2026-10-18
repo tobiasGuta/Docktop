@@ -192,16 +192,36 @@ func TestDockerIORatesAndResetAcrossContexts(t *testing.T) {
 	}
 }
 
-func TestFrameInheritsTerminalBackground(t *testing.T) {
-	// Ordinary panel rows should not force an ANSI background color.
-	// Highlighted selected rows are intentionally styled separately.
-	rendered := frame("Transparent", []string{"plain", cyan.Render("accent")}, 40, 6)
-	if strings.Contains(rendered, "\x1b[48;") || strings.Contains(rendered, "\x1b[40m") {
-		t.Fatalf("panel applies an explicit background: %q", rendered)
+func TestFramePaintsBackgroundAndPreservesAlignment(t *testing.T) {
+	rendered := frame("Opaque", []string{"plain", cyan.Render("accent")}, 40, 6)
+	if !strings.Contains(rendered, "\x1b[48;") {
+		t.Fatalf("panel must paint an explicit background: %q", rendered)
 	}
 	for _, line := range strings.Split(rendered, "\n") {
 		if lipgloss.Width(line) != 40 {
 			t.Fatalf("frame lost alignment: width=%d", lipgloss.Width(line))
+		}
+	}
+}
+
+func TestDarkCanvasFillsViewportAndKeepsResponsiveLayout(t *testing.T) {
+	for _, size := range [][2]int{{172, 52}, {110, 32}, {82, 24}, {50, 16}, {30, 10}} {
+		m := testModel()
+		m.width, m.height = size[0], size[1]
+		for _, page := range []int{0, 1, 2, 5, 6, 7} {
+			m.page = page
+			rendered := m.View()
+			if !strings.Contains(rendered, "\x1b[48;") {
+				t.Fatalf("page %d at %v has no painted background", page, size)
+			}
+			if lipgloss.Height(rendered) != m.height {
+				t.Fatalf("page %d at %v height %d != viewport %d", page, size, lipgloss.Height(rendered), m.height)
+			}
+			for i, line := range strings.Split(rendered, "\n") {
+				if lipgloss.Width(line) > m.width {
+					t.Fatalf("page %d at %v row %d exceeds viewport: %d", page, size, i, lipgloss.Width(line))
+				}
+			}
 		}
 	}
 }

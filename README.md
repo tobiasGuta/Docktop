@@ -7,7 +7,7 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 ## What works (v0.14 reviewed MCP client connection)
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
-- Transparent panels that inherit the terminal theme and an adaptive compact dashboard on narrow terminals. Graph y-axes scale to observed peaks and show their true maxima.
+- Cohesive dark canvas with softly contrasted panel surfaces, category-specific accents and an adaptive compact dashboard on narrow terminals. The app paints its own background, including in transparent terminals; graph y-axes still scale to observed peaks and show their true maxima.
 - Docker containers, images, networks, and volumes, with full identifiers and metadata in the details panel.
 - Recent Docker container CPU and memory history in bounded plots (60 samples; refresh ~5 seconds). CPU is the sum of running-container percentages: 100% equals one CPU core, **not** total host CPU. Memory is the sum of Docker-reported running-container usage.
 - Container CPU, memory, network I/O and block I/O readings where Docker supplies them.
@@ -40,7 +40,7 @@ Also supported since v0.3:
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
-Not yet implemented: Compose management operations, container creation, advanced image management beyond reviewed tag removal, live MCP session telemetry or automatic MCP client installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The panel background inherits the terminal theme; only selected rows have a highlight background.
+Not yet implemented: Compose management operations, container creation, advanced image management beyond reviewed tag removal, live MCP session telemetry or automatic MCP client installation, full per-container metric plots, or controlled comparative benchmarks against other tools. The default dark canvas and panel surfaces are explicitly painted to avoid wallpaper bleed-through in transparent terminals. Selected rows have a contrasting highlight background.
 
 ### Local host metrics (Linux only)
 

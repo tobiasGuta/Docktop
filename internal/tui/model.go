@@ -20,13 +20,13 @@ const catalog = "mcp/docker-mcp-catalog:latest"
 const historyLimit = 60
 
 var (
-	cyan          = lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
-	muted         = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	green         = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	amber         = lipgloss.NewStyle().Foreground(lipgloss.Color("220"))
-	red           = lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true)
-	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("24"))
-	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color("61"))
+	cyan          = lipgloss.NewStyle().Foreground(lipgloss.Color(colorCyan)).Bold(true)
+	muted         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorMuted))
+	green         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGreen))
+	amber         = lipgloss.NewStyle().Foreground(lipgloss.Color(colorAmber))
+	red           = lipgloss.NewStyle().Foreground(lipgloss.Color(colorRed)).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Background(lipgloss.Color(colorSelection)).Bold(true)
+	edge          = lipgloss.NewStyle().Foreground(lipgloss.Color(colorBorder))
 )
 var tabs = []string{"Dashboard", "Containers", "Images", "Networks", "Volumes", "MCP Catalog", "Compose", "Docker Hub"}
 var shortTabs = []string{"Home", "Ctr", "Img", "Net", "Vol", "MCP", "Cmp", "Hub"}
@@ -850,6 +850,23 @@ func wrap(value string, width, lines int) []string {
 	}
 	return out
 }
+// panelAccent gives the dashboard panels distinct visual identities without
+// changing their data, commands or layout dimensions.
+func panelAccent(title string) lipgloss.Style {
+	switch {
+	case strings.HasPrefix(title, "CPU"):
+		return green
+	case strings.HasPrefix(title, "MEMORY"):
+		return cyan
+	case strings.HasPrefix(title, "NETWORK"), strings.HasPrefix(title, "Docker Hub"):
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(colorViolet)).Bold(true)
+	case strings.HasPrefix(title, "CONTAINERS"):
+		return green
+	default:
+		return cyan
+	}
+}
+
 func frame(title string, content []string, width, height int) string {
 	width = max(12, width)
 	height = max(3, height)
@@ -857,7 +874,7 @@ func frame(title string, content []string, width, height int) string {
 	title = plain(title, max(0, inner-3))
 	used := lipgloss.Width(title) + 2
 	var b strings.Builder
-	b.WriteString(edge.Render("╭─ ") + cyan.Render(title) + edge.Render(strings.Repeat("─", max(0, inner-used))+"╮") + "\n")
+	b.WriteString(edge.Render("╭─ ") + panelAccent(title).Render(title) + edge.Render(strings.Repeat("─", max(0, inner-used))+"╮") + "\n")
 	for i := 0; i < height-2; i++ {
 		line := ""
 		if i < len(content) {
@@ -873,7 +890,9 @@ func frame(title string, content []string, width, height int) string {
 		}
 	}
 	b.WriteString("\n" + edge.Render("╰"+strings.Repeat("─", inner)+"╯"))
-	return b.String()
+	// Paint every cell, including padding spaces, so transparent terminals do
+	// not show desktop wallpaper through the panel content.
+	return panelSurface.Render(b.String())
 }
 func sparkline(samples []float64, cells int, minCeiling float64) string {
 	if cells <= 0 {
@@ -1076,7 +1095,9 @@ func (m Model) View() string {
 		b.WriteString("\n")
 	}
 	b.WriteString(m.footer(w))
-	return b.String()
+	// Keep the entire screen visually stable even when the terminal emulator
+	// itself is configured for transparency. This is presentation-only.
+	return paintCanvas(b.String(), w, h)
 }
 func (m Model) logLines(limit, width int) []string {
 	lines := strings.Split(dockercli.Clean(m.detailText, 18000), "\n")
