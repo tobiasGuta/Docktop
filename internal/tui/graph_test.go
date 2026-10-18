@@ -115,3 +115,50 @@ func TestBrailleGraphResponsiveOnAllDashboardSizes(t *testing.T) {
 		}
 	}
 }
+
+func TestBrailleContourAvoidsFullHeightMemoryRectangle(t *testing.T) {
+	cells := buildBrailleHistory([]float64{45,45,45,45,45},60,8,50)
+	// 45/50 of the axis should have a bright contour near the top, with
+	// shadow nearby, not a full column of regularly dotted fill to zero.
+	for row := 4; row < 8; row++ {
+		for col := 55; col < 60; col++ {
+			if cells[row][col].bits != 0 {
+				t.Fatalf("shadow extends too far below a stable series: row %d col %d", row, col)
+			}
+		}
+	}
+	var outline, shadow int
+	for _, row := range cells {
+		for _, cell := range row {
+			if cell.outline { outline++ } else if cell.bits != 0 { shadow++ }
+		}
+	}
+	if outline == 0 || shadow == 0 {
+		t.Fatalf("missing contour or soft shading: outline=%d shadow=%d",outline,shadow)
+	}
+}
+
+func TestNarrowBrailleChartStillShowsMostRecentMeasurement(t *testing.T) {
+	for _, cols := range []int{2,3,5,9} {
+		cells := buildBrailleHistory([]float64{3},cols,3,10)
+		hasLast := false
+		for _, row := range cells {
+			if row[cols-1].bits != 0 { hasLast=true; break }
+		}
+		if !hasLast { t.Fatalf("%d columns lost newest sample",cols) }
+		for _,row := range cells {
+			for col := 0; col < cols-1; col++ {
+				if row[col].bits != 0 {t.Fatalf("%d columns invented previous history at %d",cols,col)}
+			}
+		}
+	}
+}
+
+func TestIdleIOOnlyShowsQuietStateWhenReadingsAreKnown(t *testing.T) {
+	if hasOnlyZeroSamples(nil) || hasOnlyZeroSamples([]float64{math.NaN()}) || hasOnlyZeroSamples([]float64{0, 1}) {
+		t.Fatal("unknown/active history cannot count as measured idle")
+	}
+	if !hasOnlyZeroSamples([]float64{0,0,0}) {
+		t.Fatal("measured zero history should show idle")
+	}
+}

@@ -33,43 +33,77 @@ func plottedValue(v, ceiling float64, dots int) int {
 	return max(1, min(dots, int(math.Round(v/ceiling*float64(dots)))))
 }
 
-// buildBrailleHistory maps the bounded 60-slot history onto terminal dot
-// columns. Empty preceding time slots stay empty; they are not zero samples.
+// setBrailleDot records a terminal subpixel without allocating a second image.
+// Bright outline cells are distinguished from the sparse shadow beneath them.
+func setBrailleDot(result [][]graphCell, x, y int, outline bool) {
+	if y < 0 || y >= len(result)*4 || len(result)==0 || x < 0 || x >= len(result[0])*2 {
+		return
+	}
+	cell := &result[y/4][x/2]
+	cell.bits |= brailleDotBit[y%4][x%2]
+	cell.outline = cell.outline || outline
+}
+
+// buildBrailleHistory plots a bright, connected measurement contour and a
+// shallow stippled shadow. It avoids the old repeated horizontal dot bands
+// that made stable memory usage resemble a densely dotted rectangle.
+// Existing measured slots are held at their actual value; the line only
+// connects adjacent measured samples, never the uncollected history window.
 func buildBrailleHistory(samples []float64, columns, rows int, ceiling float64) [][]graphCell {
 	if len(samples) > historyLimit {
 		samples = samples[len(samples)-historyLimit:]
 	}
-	result := make([][]graphCell, rows)
+	result := make([][]graphCell, max(0, rows))
 	for row := range result {
-		result[row] = make([]graphCell, columns)
+		result[row] = make([]graphCell, max(0, columns))
 	}
 	if rows <= 0 || columns <= 0 {
 		return result
 	}
 	dotCols, dotRows := columns*2, rows*4
+	previousSlot, previousTop := -1, -1
 	for x := 0; x < dotCols; x++ {
-		slot := x * historyLimit / dotCols
-		sampleIdx := slot - (historyLimit - len(samples))
+		// The last dot column always covers the newest sample, even when a
+		// narrow terminal has fewer dot columns than history slots.
+		slot := (x+1)*historyLimit/dotCols
+		if slot > 0 {
+			slot--
+		}
+		sampleIdx := slot - (historyLimit-len(samples))
 		if sampleIdx < 0 || sampleIdx >= len(samples) {
+			previousSlot, previousTop = -1, -1
 			continue
 		}
 		filled := plottedValue(samples[sampleIdx], ceiling, dotRows)
 		if filled == 0 {
+			previousSlot, previousTop = -1, -1
 			continue
 		}
 		top := dotRows - filled
-		for y := top; y < dotRows; y++ {
-			// A bright thin contour and sparse under-fill make a stable series
-			// look like a trace, not an opaque rectangular slab.
-			outline := y == top || y == top+1
-			if !outline && ((y-top)%4 != 0 || x%2 != 0) {
-				continue
+		// The main stroke is two subpixels high: visible but not a block.
+		setBrailleDot(result, x, top, true)
+		setBrailleDot(result, x, top+1, true)
+
+		// Complete short vertical transitions between immediately adjacent
+		// measurement slots. Do not interpolate across missing time slots.
+		if previousSlot >= 0 && slot-previousSlot == 1 {
+			lo, hi := min(previousTop, top), max(previousTop, top)
+			for y := lo; y <= hi; y++ {
+				setBrailleDot(result, x, y, true)
 			}
-			row, col := y/4, x/2
-			cell := &result[row][col]
-			cell.bits |= brailleDotBit[y%4][x%2]
-			cell.outline = cell.outline || outline
 		}
+
+		// Use a short, spatially varied glow immediately below the trace,
+		// rather than full-height fill. It is purely decorative shading and
+		// never indicates an extra measurement.
+		depth := min(max(3, dotRows/5), dotRows-top-1)
+		for dy := 2; dy <= depth; dy++ {
+			y := top + dy
+			if dy <= 3 || (x*7+y*3)%11 < 3 {
+				setBrailleDot(result, x, y, false)
+			}
+		}
+		previousSlot, previousTop = slot, top
 	}
 	return result
 }
@@ -119,7 +153,7 @@ func plotHistoryTones(samples []float64, width, height int, minimum float64, acc
 			char := ' '
 			if cell.bits == 0 {
 				// Faint reference lines are not activity samples.
-				if (row == 0 || row == height/2 || row == height-1) && col%4 == 0 {
+				if (row == 0 || row == height/2 || row == height-1) && col%8 == 0 {
 					char = '·'
 				}
 			} else {

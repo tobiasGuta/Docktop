@@ -145,19 +145,37 @@ func (m Model) enginePanel(w, h int) []string {
 	return trimLines(lines, h)
 }
 
+// hasOnlyZeroSamples requires actual readings; an empty history means
+// "collecting", not "zero". Invalid readings aren't treated as evidence.
+func hasOnlyZeroSamples(samples []float64) bool {
+	if len(samples) == 0 {
+		return false
+	}
+	for _, v := range samples {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (m Model) ioPanel(w, h int) []string {
 	lines := []string{muted.Render("Docker container I/O rates / second")}
 	if !m.ioRates.Ready {
 		return append(lines, "Collecting two matching samples…", muted.Render("No host network/disk telemetry"))
 	}
 	lines = append(lines, fmt.Sprintf("NET   ↓ %-13s ↑ %s", niceBytes(m.ioRates.RX)+"/s", niceBytes(m.ioRates.TX)+"/s"))
-	if h >= 9 {
+	if h >= 7 && hasOnlyZeroSamples(m.rxHistory) {
+		lines = append(lines, muted.Render("  ──  No network activity measured"))
+	} else if h >= 9 {
 		lines = append(lines, plotHistoryTones(m.rxHistory, max(12, w), 2, 1, cyan, graphLowerFill, graphMiddleFill)...)
 	} else if h >= 7 {
 		lines = append(lines, cyan.Render(sparkline(m.rxHistory, max(1, w-3), max(1, historyPeak(m.rxHistory)))))
 	}
 	lines = append(lines, fmt.Sprintf("DISK  R %-13s W %s", niceBytes(m.ioRates.Read)+"/s", niceBytes(m.ioRates.Write)+"/s"))
-	if h >= 9 {
+	if h >= 8 && hasOnlyZeroSamples(m.diskHistory) {
+		lines = append(lines, muted.Render("  ──  No disk activity measured"))
+	} else if h >= 9 {
 		lines = append(lines, plotHistoryTones(m.diskHistory, max(12, w), 2, 1, green, graphCPULow, graphCPUMid)...)
 	} else if h >= 8 {
 		lines = append(lines, green.Render(sparkline(m.diskHistory, max(1, w-3), max(1, historyPeak(m.diskHistory)))))
