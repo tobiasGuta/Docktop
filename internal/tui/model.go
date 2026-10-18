@@ -922,6 +922,11 @@ func (m Model) statusLine(w int) string {
 	if !m.snapshot.Updated.IsZero() {
 		label += "  •  last scan " + m.snapshot.Updated.Format("15:04:05")
 	}
+	if w >= 125 && len(m.snapshot.QueryTimings) > 0 {
+		step, duration := m.snapshot.SlowestQuery()
+		label += fmt.Sprintf("  •  poll %dms (slow: %s %dms)",
+			m.snapshot.Duration.Milliseconds(), step, duration.Milliseconds())
+	}
 	return muted.Render(plain(label, w))
 }
 func (m Model) navigation(w int) string {

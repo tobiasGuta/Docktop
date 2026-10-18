@@ -36,6 +36,7 @@ Also supported since v0.3:
 - **Empty-profile onboarding:** The profile manager explains when profiles may be disabled, shows the manual enable command, and supports `c` to create an empty profile after name review and explicit `y` confirmation. No servers or tools are added or enabled automatically.
 - **Profile tool permission manager** (`6`, then `m`): navigate a structured profile list, select an assigned server, press `e` to request enabling **all** its tools or `d` to request disabling **all** its tools. An explicit `y` confirmation is required. Profile IDs and server membership are rechecked before modifying tool permissions. This neither adds/removes a server nor starts it. Changes may affect connected clients immediately.
 - **Performance sampler**: `scripts/benchmark-process.sh PID [seconds] [interval]` reports interval CPU and resident memory min/mean/peak for Docktop without changing Docker state. The original `scripts/measure-process.sh` remains available for quick legacy snapshots.
+- **Consistent Docker-context snapshots**: each poll captures the active context once, then pins all container, image, network, volume and stats reads to it. Polling remains sequential, non-atomic within that engine, and has a 30-second overall deadline. Wide terminals show last-scan duration and the slowest query in the status line; this measures the read path, not total Docker daemon or subprocess memory.
 
 The Docker I/O panel computes approximate **bytes per second** from successive `docker stats` cumulative counters, matched by container ID in the same Docker context. No rate appears until two valid samples are available. New containers and counter resets do not produce artificial spikes. The container CPU figure sums running-container usage (100% = one CPU core), not whole-host utilization. **The new local host CPU percentage** is calculated separately from `/proc/stat` as percent of total logical CPU time. A dashboard graph with a low but nonzero reading is autoscaled and labelled; its apparent height is not the percent of total host CPU.
 
@@ -49,7 +50,7 @@ The graphs use a 60-sample rolling window at roughly five-second intervals. Netw
 
 ## Requirements
 
-- Go 1.23+ for building
+- Go 1.24+ for building
 - `docker` CLI with an accessible Docker Engine (including rootless and remote contexts)
 - Optional: Docker MCP CLI plugin and pulled `mcp/docker-mcp-catalog:latest`
 
