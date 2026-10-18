@@ -59,22 +59,36 @@ func (m Model) compactDashboard(w, h int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, frame("DOCKER METRICS", summary, w, summaryH), "", frame("CONTAINERS", m.list(w-4, max(1, h-summaryH-3)), w, h-summaryH-1))
 }
 
+// historyFootnote distinguishes collected samples from empty chart space.
+// Charts remain right-anchored rather than stretching short histories into
+// fabricated data points.
+func historyFootnote(samples int, unit string) string {
+	count := min(max(0, samples), historyLimit)
+	return fmt.Sprintf("◀ %dm window   •   %d/%d samples   •   latest ▶   •   %s",
+		historyLimit*int(refreshInterval/time.Second)/60, count, historyLimit, unit)
+}
+
 func (m Model) cpuPanel(w, h int) []string {
 	cpu, _ := m.snapshot.TotalUsage()
 	peak := historyPeak(m.cpuHistory)
-	caption := fmt.Sprintf("%s   %.1f%% total   •   peak %.1f%%   •   100%% = 1 CPU core", green.Render("● LIVE"), cpu, peak)
+	caption := fmt.Sprintf("%s  %5.1f%%   %s peak %.1f%%   %s 100%% = one core",
+		green.Render("● LIVE"), cpu, muted.Render("•"), peak, muted.Render("•"))
 	lines := []string{caption}
 	chartH := max(2, h-3)
 	lines = append(lines, plotHistory(m.cpuHistory, max(12, w), chartH, 10, green)...)
-	lines = append(lines, muted.Render("oldest → newest   •   5s/sample   •   local Docker context"))
+	lines = append(lines, muted.Render(plain(historyFootnote(len(m.cpuHistory), "Docker CPU"), w)))
 	return lines
 }
+
 func (m Model) memoryPanel(w, h int) []string {
 	_, mem := m.snapshot.TotalUsage()
 	current := mem / 1048576
-	lines := []string{fmt.Sprintf("%s  %.1f MiB  •  running containers only", cyan.Render("● LIVE"), current)}
-	lines = append(lines, plotHistory(m.memHistory, max(12, w), max(1, h-3), 64, cyan)...)
-	lines = append(lines, muted.Render("0 MiB  •  recent samples, not host RAM"))
+	lines := []string{fmt.Sprintf("%s   %.1f MiB   %s running containers only",
+		cyan.Render("● LIVE"), current, muted.Render("•"))}
+	// An adaptive memory axis makes small workloads legible. Unlike a fixed
+	// 64-MiB floor it can show 5–30 MiB workloads without flattening them.
+	lines = append(lines, plotHistory(m.memHistory, max(12, w), max(1, h-3), 8, cyan)...)
+	lines = append(lines, muted.Render(plain(historyFootnote(len(m.memHistory), "Docker memory"), w)))
 	return lines
 }
 
@@ -147,9 +161,30 @@ func (m Model) ioPanel(w, h int) []string {
 	return trimLines(lines, h)
 }
 
+// cpuMeter is an instantaneous per-container CPU bar; it is not a history
+// series. Values are capped at one core only for the bar, not the label.
+func cpuMeter(percent float64, cells int) string {
+	if cells <= 0 {
+		return ""
+	}
+	count := int(math.Round(math.Min(100, math.Max(0, percent)) / 100 * float64(cells)))
+	if percent > 0 && count == 0 {
+		count = 1
+	}
+	return strings.Repeat("▰", count) + strings.Repeat("·", cells-count)
+}
+
 func (m Model) dashboardContainerRows(w, h int) []string {
+	dense := w >= 65
 	nameWidth := max(8, w-23)
-	rows := []string{muted.Render(plain(padded("CONTAINER", nameWidth)+" CPU      MEMORY", w))}
+	if dense {
+		nameWidth = max(8, w-30)
+	}
+	header := padded("CONTAINER", nameWidth+2) + " CPU     MEMORY"
+	if dense {
+		header = padded("CONTAINER", nameWidth+2) + "ACTIVITY      CPU    MEMORY"
+	}
+	rows := []string{muted.Render(plain(header, w))}
 	if len(m.snapshot.Containers) == 0 {
 		return append(rows, muted.Render("No containers in this context"))
 	}
@@ -172,12 +207,22 @@ func (m Model) dashboardContainerRows(w, h int) []string {
 		if before, _, ok := strings.Cut(memory, " /"); ok {
 			memory = before
 		}
-		nameWidth := max(8, w-23)
 		symbol := "○"
 		if c.State == "running" {
 			symbol = "●"
 		}
-		label := fmt.Sprintf("%s %s %7s %9s", symbol, padded(c.Names, nameWidth-2), padded(cpu, 7), plain(memory, 9))
+		var label string
+		if dense {
+			meter := "        "
+			if c.State == "running" && u.CPUPerc != "" {
+				meter = cpuMeter(dockercli.Percent(u.CPUPerc), 8)
+			}
+			label = fmt.Sprintf("%s %s %8s %7s %9s", symbol,
+				padded(c.Names, nameWidth), meter, plain(cpu, 7), plain(memory, 9))
+		} else {
+			label = fmt.Sprintf("%s %s %7s %9s", symbol,
+				padded(c.Names, nameWidth-2), plain(cpu, 7), plain(memory, 9))
+		}
 		if i == m.selected {
 			rows = append(rows, selectedStyle.Render(padded(label, w)))
 		} else if c.State == "running" {
@@ -188,6 +233,7 @@ func (m Model) dashboardContainerRows(w, h int) []string {
 	}
 	return rows
 }
+
 func (m Model) compactContainerDetails(w, h int) []string {
 	if len(m.snapshot.Containers) == 0 || m.selected >= len(m.snapshot.Containers) {
 		return []string{"Select a container"}
@@ -317,11 +363,13 @@ func plotHistory(samples []float64, width, height int, minimum float64, color li
 				bars.WriteRune(symbols[index])
 			}
 		}
-		// Subtle lower-half fill keeps graphs legible while putting the vivid
-		// accent color on peaks, closer to btop-style visual hierarchy.
+		// Three shades of the same chart family give the bars depth without
+		// changing the plotted values or increasing the sample count.
 		fill := color
-		if row > height/2 {
+		if row >= height*2/3 {
 			fill = graphLowerFill
+		} else if row >= height/3 {
+			fill = graphMiddleFill
 		}
 		out = append(out, muted.Render(label)+fill.Render(bars.String()))
 	}

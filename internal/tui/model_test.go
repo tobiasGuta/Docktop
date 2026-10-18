@@ -464,3 +464,50 @@ func TestCanvasReassertsBackgroundAfterPanelExit(t *testing.T) {
 		t.Fatalf("canvas height lost: %d", lipgloss.Height(view))
 	}
 }
+
+func TestDashboardHistoryFootnoteDoesNotInventSamples(t *testing.T) {
+	got := historyFootnote(7, "Docker CPU")
+	if !strings.Contains(got, "7/60 samples") || !strings.Contains(got, "5m window") {
+		t.Fatalf("short history was misrepresented: %q", got)
+	}
+	if got := historyFootnote(500, "Docker CPU"); !strings.Contains(got, "60/60 samples") {
+		t.Fatalf("history should cap at its bounded buffer: %q", got)
+	}
+}
+
+func TestDashboardCPUMetersAndLongNamesStayWithinPanel(t *testing.T) {
+	if got := cpuMeter(0, 8); got != "········" {
+		t.Fatalf("zero CPU meter: %q", got)
+	}
+	if got := cpuMeter(0.5, 8); got != "▰·······" {
+		t.Fatalf("low but nonzero CPU meter: %q", got)
+	}
+	if got := cpuMeter(250, 8); got != "▰▰▰▰▰▰▰▰" {
+		t.Fatalf("multicore CPU meter: %q", got)
+	}
+	for _, width := range []int{42, 65, 75, 110} {
+		m := testModel()
+		m.snapshot.Containers[0].Names = "database-production-name-exceeding-available-space-to-prove-truncation-is-safe"
+		m.snapshot.Stats["0123456789abcdef"] = dockercli.Usage{
+			ID: "0123456789abcdef", CPUPerc: "127.8%", MemUsage: "15.75MiB / 32GiB",
+		}
+		for _, row := range m.dashboardContainerRows(width, 5) {
+			if got := lipgloss.Width(row); got > width {
+				t.Fatalf("width %d rendered %d cells: %q", width, got, row)
+			}
+		}
+	}
+}
+
+func TestMemoryGraphAutoscaleUsesActualHistory(t *testing.T) {
+	m := testModel()
+	m.memHistory = []float64{12, 22, 44.3}
+	lines := m.memoryPanel(70, 10)
+	text := strings.Join(lines, " ")
+	if !strings.Contains(text, "50.0") {
+		t.Fatalf("memory graph did not scale near actual values: %q", text)
+	}
+	if !strings.Contains(text, "3/60 samples") {
+		t.Fatalf("memory graph did not disclose partial history: %q", text)
+	}
+}

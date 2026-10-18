@@ -21,12 +21,14 @@ const (
 	colorRed       = "#FF8292"
 	colorViolet    = "#B39AF5"
 	colorGraphLow  = "#326984"
+	colorGraphMid  = "#3CA8B3"
 )
 
 var (
 	canvasSurface  = lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Background(lipgloss.Color(colorCanvas))
 	panelSurface   = lipgloss.NewStyle().Foreground(lipgloss.Color(colorText)).Background(lipgloss.Color(colorPanel))
-	graphLowerFill = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGraphLow))
+	graphLowerFill  = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGraphLow))
+	graphMiddleFill = lipgloss.NewStyle().Foreground(lipgloss.Color(colorGraphMid))
 )
 
 // Lip Gloss applies the desired background around a rendered block, but color
