@@ -576,3 +576,78 @@ func TestSelectedContainerDetailsSanitizeHostileNames(t *testing.T) {
 		t.Fatalf("untrusted Docker text included terminal control: %q",lines)
 	}
 }
+
+
+func TestPolishedNavigationAlwaysPreservesSelectedTab(t *testing.T) {
+	for _, width := range []int{30, 50, 74, 75, 90, 110, 129, 130, 172} {
+		for page := 0; page < 8; page++ {
+			m := testModel()
+			m.page = page
+			line := m.navigation(width)
+			if lipgloss.Width(line) > width {
+				t.Fatalf("navigation width %d page %d overflow: %d", width, page, lipgloss.Width(line))
+			}
+			label := tabs[page]
+			short := shortTabs[page]
+			if !strings.Contains(line, label) && !strings.Contains(line, short) {
+				t.Fatalf("navigation width %d lost active page %d: %q", width, page, line)
+			}
+		}
+	}
+	m := testModel()
+	m.page = 7
+	if line := m.navigation(172); !strings.Contains(line, "ENGINE") || !strings.Contains(line, "TOOLS") ||
+		!strings.Contains(line, "Docker Hub") || !strings.Contains(line, "Dashboard") {
+		t.Fatalf("wide navigation lost grouping or tabs: %q", line)
+	}
+}
+
+func TestPolishedHeaderAndStatusReflectSnapshotWithoutFakeMetrics(t *testing.T) {
+	m := testModel()
+	m.snapshot.Updated = time.Date(2026, 10, 17, 21, 45, 0, 0, time.UTC)
+	m.snapshot.Duration = 2100 * time.Millisecond
+	m.snapshot.QueryTimings = []dockercli.QueryTiming{
+		{Step: "context", Duration: time.Millisecond},
+		{Step: "stats", Duration: 2040 * time.Millisecond},
+	}
+	for _, width := range []int{30, 55, 80, 110, 125, 172} {
+		if got := lipgloss.Width(m.header(width)); got > width {
+			t.Fatalf("header %d overflow: %d", width, got)
+		}
+		if got := lipgloss.Width(m.statusLine(width)); got > width {
+			t.Fatalf("status %d overflow: %d", width, got)
+		}
+	}
+	if got := m.statusLine(172); !strings.Contains(got, "READY") ||
+		!strings.Contains(got, "CTX") || !strings.Contains(got, "poll 2100ms") ||
+		!strings.Contains(got, "slow: stats 2040ms") {
+		t.Fatalf("wide status omitted important detail: %q", got)
+	}
+	if got := m.header(172); !strings.Contains(got, "DOCKER WORKLOAD") || !strings.Contains(got, "CPU 2.5%") {
+		t.Fatalf("header incorrectly names metrics: %q", got)
+	}
+	m.snapshot.Context = ""
+	m.snapshot.Stats = nil
+	if got := m.header(172); !strings.Contains(got, "CPU —") {
+		t.Fatalf("unknown resource readings shown as zero: %q", got)
+	}
+	if got := m.statusLine(172); !strings.Contains(got, "CONNECTING") {
+		t.Fatalf("missing context not indicated: %q", got)
+	}
+	m.snapshot.Context = "default"
+	m.busy = true
+	if got := m.statusLine(172); !strings.Contains(got, "SYNCING") {
+		t.Fatalf("refresh indicator missing: %q", got)
+	}
+}
+
+func TestStatusSanitizesUntrustedLongContextAtSmallWidths(t *testing.T) {
+	m := testModel()
+	m.snapshot.Context = strings.Repeat("long-remote-context-", 12) + "\x1b[2Jsecret"
+	for _, width := range []int{30, 50, 80, 115, 172} {
+		line := m.statusLine(width)
+		if lipgloss.Width(line) > width || strings.Contains(line, "[2J") || strings.Contains(line, "secret") {
+			t.Fatalf("unsafe or oversized context at %d: %q", width, line)
+		}
+	}
+}
