@@ -432,3 +432,35 @@ func TestSnapshotTimingStatusAtWideTerminalOnly(t *testing.T) {
 		}
 	}
 }
+
+
+func TestPanelReassertsBackgroundAfterEmbeddedANSIResets(t *testing.T) {
+	// Simulate colorful UI spans that reset a terminal's background to its
+	// default transparency, and a selected row with an intentional highlight.
+	raw := "normal\x1b[0m spaces \x1b[48;2;38;81;107mselected\x1b[0m tail\x1b[49m end"
+	painted := paintPanelRows(raw)
+	if !strings.HasPrefix(painted, panelBackgroundSGR) ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+" spaces") ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+" tail") ||
+		!strings.Contains(painted, "\x1b[49m"+panelBackgroundSGR+" end") ||
+		!strings.HasSuffix(painted, resetBackgroundSGR) {
+		t.Fatalf("panel background lost around nested ANSI resets: %q", painted)
+	}
+	if !strings.Contains(painted, "\x1b[48;2;38;81;107mselected") {
+		t.Fatal("selection highlight was overridden")
+	}
+}
+
+func TestCanvasReassertsBackgroundAfterPanelExit(t *testing.T) {
+	panel := paintPanelRows("some\x1b[0m text")
+	view := paintCanvas("header\n"+panel+"\nfooter", 50, 10)
+	if !strings.Contains(view, resetBackgroundSGR+canvasBackgroundSGR) {
+		t.Fatalf("canvas background not restored after panel exit: %q", view)
+	}
+	if !strings.Contains(view, "\x1b[0m"+canvasBackgroundSGR+panelBackgroundSGR) {
+		t.Fatalf("panel background not restored after styled text: %q", view)
+	}
+	if lipgloss.Height(view) != 10 {
+		t.Fatalf("canvas height lost: %d", lipgloss.Height(view))
+	}
+}
