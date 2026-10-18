@@ -604,6 +604,7 @@ func TestPolishedNavigationAlwaysPreservesSelectedTab(t *testing.T) {
 
 func TestPolishedHeaderAndStatusReflectSnapshotWithoutFakeMetrics(t *testing.T) {
 	m := testModel()
+	m.busy = false // New() starts in the initial syncing state.
 	m.snapshot.Updated = time.Date(2026, 10, 17, 21, 45, 0, 0, time.UTC)
 	m.snapshot.Duration = 2100 * time.Millisecond
 	m.snapshot.QueryTimings = []dockercli.QueryTiming{
