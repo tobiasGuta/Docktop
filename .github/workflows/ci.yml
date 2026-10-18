@@ -15,7 +15,7 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Read-only rendering benchmarks
-        run: go test ./internal/tui -run '^$' -bench '^(BenchmarkDashboardView|BenchmarkBrailleGraphs)$' -benchmem -benchtime=300ms -count=1
+        run: go test ./internal/tui -run '^$' -bench '^(BenchmarkDashboardView|BenchmarkBrailleGraphs|BenchmarkDashboardBody|BenchmarkCanvasPaint|BenchmarkPanelFrame)$' -benchmem -benchtime=300ms -count=1
       - name: Vet
         run: go vet ./...
       - name: Build

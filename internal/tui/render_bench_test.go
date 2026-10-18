@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -33,5 +34,32 @@ func BenchmarkBrailleGraphs(b *testing.B) {
 	for i:=0; i<b.N; i++ {
 		_ = plotHistory(m.cpuHistory, 110, 16, 10, green)
 		_ = plotHistory(m.memHistory, 70, 8, 8, cyan)
+	}
+}
+
+func BenchmarkDashboardBody(b *testing.B) {
+	m := dashboardBenchmarkModel()
+	b.ReportAllocs()
+	for i:=0;i<b.N;i++ {
+		renderBenchmarkSink=m.dashboard(m.width,m.height-6)
+	}
+}
+
+func BenchmarkCanvasPaint(b *testing.B) {
+	m := dashboardBenchmarkModel()
+	raw:=m.header(m.width)+"\n"+m.statusLine(m.width)+"\n"+m.navigation(m.width)+"\n"+
+		m.dashboard(m.width,m.height-6)+"\n\n"+m.footer(m.width)
+	b.ReportAllocs()
+	for i:=0;i<b.N;i++ {
+		renderBenchmarkSink=paintCanvas(raw,m.width,m.height)
+	}
+}
+
+func BenchmarkPanelFrame(b *testing.B) {
+	content:=make([]string,20)
+	for i:=range content { content[i]=green.Render("● ACTIVE "+strings.Repeat("╍",115)) }
+	b.ReportAllocs()
+	for i:=0;i<b.N;i++ {
+		renderBenchmarkSink=frame("CPU  /  DOCKER WORKLOADS",content,118,22)
 	}
 }
