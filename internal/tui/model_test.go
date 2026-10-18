@@ -511,3 +511,68 @@ func TestMemoryGraphAutoscaleUsesActualHistory(t *testing.T) {
 		t.Fatalf("memory graph did not disclose partial history: %q", text)
 	}
 }
+
+func TestDashboardContainerStatesAndNoInventedUsage(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers = append(m.snapshot.Containers,
+		dockercli.Container{ID:"stopped",Names:"old-job",State:"exited",Status:"Exited (0)"},
+		dockercli.Container{ID:"paused",Names:"suspended",State:"paused",Status:"Paused"},
+	)
+	m.selected = 0
+	rows := m.dashboardContainerRows(100, 6)
+	if len(rows) != 4 || !strings.Contains(rows[0], "STATE") || !strings.Contains(rows[0], "CPU LOAD") {
+		t.Fatalf("missing wide headers: %q", rows)
+	}
+	if !strings.Contains(rows[2], "EXITED") || !strings.Contains(rows[2], "—") || !strings.Contains(rows[3], "PAUSED") {
+		t.Fatalf("stopped/paused states or unavailable metrics lost: %q", rows)
+	}
+	if !strings.Contains(rows[1], "database-production") {
+		t.Fatal("selected container was lost")
+	}
+	for _, width := range []int{42,65,80,95,110} {
+		for _, row := range m.dashboardContainerRows(width, 6) {
+			if actual := lipgloss.Width(row); actual > width {
+				t.Fatalf("container row overflow at %d (%d): %q", width, actual, row)
+			}
+		}
+	}
+}
+
+func TestSelectedContainerDetailsReadableAndFooterPreserved(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers[0].Ports = "127.0.0.1:55432->5432/tcp"
+	m.snapshot.Stats["0123456789abcdef"] = dockercli.Usage{
+		ID:"0123456789abcdef",CPUPerc:"2.4%",MemUsage:"18.2MiB / 31GiB",
+	}
+	for _, h := range []int{1, 4, 7, 8, 10, 11, 15} {
+		lines := m.compactContainerDetails(56,h)
+		if len(lines) > h {
+			t.Fatalf("details height %d overflowed with %d lines",h,len(lines))
+		}
+		if !strings.Contains(lines[len(lines)-1], "[Enter] inspect") {
+			t.Fatalf("details height %d lost keyboard controls: %q",h,lines)
+		}
+		for _,line := range lines {
+			if width:=lipgloss.Width(line);width>56 {
+				t.Fatalf("details width exceeded: %d cells: %q",width,line)
+			}
+		}
+	}
+	m.snapshot.Stats = map[string]dockercli.Usage{}
+	lines := strings.Join(m.compactContainerDetails(56,12)," ")
+	if !strings.Contains(lines, "Waiting for CPU statistics") ||
+		!strings.Contains(lines, "Waiting for memory statistics") {
+		t.Fatalf("unavailable data displayed as measured zero: %q",lines)
+	}
+}
+
+func TestSelectedContainerDetailsSanitizeHostileNames(t *testing.T) {
+	m := testModel()
+	m.snapshot.Containers[0].Names="normal\x1b[2Junexpected"
+	m.snapshot.Containers[0].Image="image\x1b[31mbad"
+	m.snapshot.Containers[0].Status="Up\x1b[0m"
+	lines:=strings.Join(m.compactContainerDetails(45,12)," ")
+	if strings.Contains(lines,"[2J") || strings.Contains(lines,"[31m") {
+		t.Fatalf("untrusted Docker text included terminal control: %q",lines)
+	}
+}
