@@ -94,14 +94,14 @@ func plotHistoryTones(samples []float64, width, height int, minimum float64, acc
 	styles := [4]lipgloss.Style{muted, low, middle, accent}
 	out := make([]string, 0, height)
 	for row := 0; row < height; row++ {
-		axisText := "        "
+		axisText := "         "
 		switch {
 		case row == 0:
-			axisText = fmt.Sprintf("%7.1f ", ceiling)
+			axisText = fmt.Sprintf("%8.1f ", ceiling)
 		case row == height-1:
-			axisText = "   0.0  "
+			axisText = "    0.0  "
 		case row == height/2:
-			axisText = fmt.Sprintf("%7.1f ", ceiling/2)
+			axisText = fmt.Sprintf("%8.1f ", ceiling/2)
 		}
 		var rowText strings.Builder
 		// Batch adjacent cells of the same color to minimize escape codes
