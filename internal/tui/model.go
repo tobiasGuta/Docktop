@@ -892,7 +892,7 @@ func frame(title string, content []string, width, height int) string {
 	b.WriteString("\n" + edge.Render("╰"+strings.Repeat("─", inner)+"╯"))
 	// A single surrounding Lip Gloss background can be reset by embedded
 	// colored spans. Paint every row and restore its surface after resets.
-	return paintPanelRows(panelSurface.Render(b.String()))
+	return paintPanelRows(b.String())
 }
 func sparkline(samples []float64, cells int, minCeiling float64) string {
 	if cells <= 0 {

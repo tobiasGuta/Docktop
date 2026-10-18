@@ -43,37 +43,86 @@ var (
 const (
 	canvasBackgroundSGR = "\x1b[48;2;16;21;34m" // colorCanvas
 	panelBackgroundSGR  = "\x1b[48;2;26;34;50m" // colorPanel
+	panelForegroundSGR  = "\x1b[38;2;228;237;247m" // colorText
 	resetBackgroundSGR  = "\x1b[49m"
 )
 
+// Reuse the SGR replacers: a full dashboard redraw contains dozens of
+// colored spans, and allocating a fresh replacer per panel row is unnecessary.
+var (
+	canvasSGRRestorer = strings.NewReplacer(
+		"\x1b[0m", "\x1b[0m"+canvasBackgroundSGR,
+		"\x1b[49m", "\x1b[49m"+canvasBackgroundSGR,
+		"\x1b[m", "\x1b[m"+canvasBackgroundSGR,
+	)
+	panelSGRRestorer = strings.NewReplacer(
+		"\x1b[0m", "\x1b[0m"+panelBackgroundSGR+panelForegroundSGR,
+		"\x1b[49m", "\x1b[49m"+panelBackgroundSGR,
+		"\x1b[39m", "\x1b[39m"+panelForegroundSGR,
+		"\x1b[m", "\x1b[m"+panelBackgroundSGR+panelForegroundSGR,
+	)
+)
+
 func reassertBackground(s, background string) string {
-	return strings.NewReplacer(
-		"\x1b[0m", "\x1b[0m"+background,
-		"\x1b[49m", "\x1b[49m"+background,
-		"\x1b[m", "\x1b[m"+background,
-	).Replace(s)
+	switch background {
+	case canvasBackgroundSGR:
+		return canvasSGRRestorer.Replace(s)
+	case panelBackgroundSGR:
+		return panelSGRRestorer.Replace(s)
+	default:
+		return strings.NewReplacer(
+			"\x1b[0m", "\x1b[0m"+background,
+			"\x1b[49m", "\x1b[49m"+background,
+			"\x1b[m", "\x1b[m"+background,
+		).Replace(s)
+	}
 }
 
-// An explicit background is applied per row, including padding spaces.
-// A final default-background code prevents leaking the panel color into gaps.
+// Direct row painting avoids running an already fully sized/styled ANSI frame
+// through Lip Gloss's general layout renderer again. Reassert the exact
+// foreground/background after nested SGR resets to preserve the dark palette.
 func paintPanelRows(s string) string {
 	lines := strings.Split(s, "\n")
+	var b strings.Builder
+	b.Grow(len(s) + len(lines)*64)
 	for i, line := range lines {
-		lines[i] = panelBackgroundSGR + reassertBackground(line, panelBackgroundSGR) + resetBackgroundSGR
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(panelBackgroundSGR)
+		b.WriteString(panelForegroundSGR)
+		b.WriteString(reassertBackground(line, panelBackgroundSGR))
+		b.WriteString("\x1b[39m")
+		b.WriteString(resetBackgroundSGR)
 	}
-	return strings.Join(lines, "\n")
+	return b.String()
 }
 
-// paintCanvas covers blank terminal rows and columns in addition to visible
-// widgets. It does not alter the widget text, size, or input behavior.
+// paintCanvas writes only visible rows, padding to the requested terminal
+// dimensions with explicit dark-background cells. This is much cheaper than
+// laying out the entire, already sized dashboard with a second styling pass.
 func paintCanvas(view string, width, height int) string {
-	width = max(0, width)
-	height = max(0, height)
-	if width == 0 || height == 0 {
+	if width <= 0 || height <= 0 {
 		return ""
 	}
-	// Do not rely on the emulator's configured background or opacity.
-	// Lip Gloss pads to the terminal dimensions with explicitly styled cells.
-	view = strings.TrimSuffix(view, "\n")
-	return reassertBackground(canvasBackgroundSGR+canvasSurface.Width(width).Height(height).Render(view), canvasBackgroundSGR)
+	lines := strings.Split(strings.TrimSuffix(view, "\n"), "\n")
+	var b strings.Builder
+	b.Grow(len(view) + width*height/4)
+	for row := 0; row < height; row++ {
+		if row > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(canvasBackgroundSGR)
+		if row < len(lines) {
+			line := lines[row]
+			b.WriteString(reassertBackground(line, canvasBackgroundSGR))
+			padding := width - lipgloss.Width(line)
+			if padding > 0 {
+				b.WriteString(strings.Repeat(" ", padding))
+			}
+		} else {
+			b.WriteString(strings.Repeat(" ", width))
+		}
+	}
+	return b.String()
 }

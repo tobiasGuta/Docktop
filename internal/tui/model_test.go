@@ -440,8 +440,8 @@ func TestPanelReassertsBackgroundAfterEmbeddedANSIResets(t *testing.T) {
 	raw := "normal\x1b[0m spaces \x1b[48;2;38;81;107mselected\x1b[0m tail\x1b[49m end"
 	painted := paintPanelRows(raw)
 	if !strings.HasPrefix(painted, panelBackgroundSGR) ||
-		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+" spaces") ||
-		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+" tail") ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+panelForegroundSGR+" spaces") ||
+		!strings.Contains(painted, "\x1b[0m"+panelBackgroundSGR+panelForegroundSGR+" tail") ||
 		!strings.Contains(painted, "\x1b[49m"+panelBackgroundSGR+" end") ||
 		!strings.HasSuffix(painted, resetBackgroundSGR) {
 		t.Fatalf("panel background lost around nested ANSI resets: %q", painted)
@@ -649,6 +649,32 @@ func TestStatusSanitizesUntrustedLongContextAtSmallWidths(t *testing.T) {
 		line := m.statusLine(width)
 		if lipgloss.Width(line) > width || strings.Contains(line, "[2J") || strings.Contains(line, "secret") {
 			t.Fatalf("unsafe or oversized context at %d: %q", width, line)
+		}
+	}
+}
+
+func TestOptimizedPaintPreservesTruecolorPanelInterior(t *testing.T) {
+	p := frame("STYLED", []string{cyan.Render("cyan")+" unstyled", selectedStyle.Render("SELECTED")}, 35, 7)
+	for _, line := range strings.Split(p, "\n") {
+		if !strings.HasPrefix(line, panelBackgroundSGR+panelForegroundSGR) {
+			t.Fatalf("panel row lost painted foreground/background: %q", line)
+		}
+		if lipgloss.Width(line) != 35 {
+			t.Fatalf("frame width changed: %d", lipgloss.Width(line))
+		}
+	}
+	m := testModel()
+	m.width, m.height = 172, 52
+	for page := 0; page < 8; page++ {
+		m.page = page
+		v := m.View()
+		if lipgloss.Height(v) != m.height {
+			t.Fatalf("page %d viewport height changed: %d", page, lipgloss.Height(v))
+		}
+		for n, line := range strings.Split(v, "\n") {
+			if lipgloss.Width(line) != m.width || !strings.HasPrefix(line, canvasBackgroundSGR) {
+				t.Fatalf("page %d row %d not fully painted: width %d",page,n,lipgloss.Width(line))
+			}
 		}
 	}
 }
