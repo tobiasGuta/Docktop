@@ -21,9 +21,11 @@ const refreshInterval = 20 * time.Second
 var docktopIcon []byte
 
 func Run(ctx context.Context, client dockercli.Client, terminal, launcher string) error {
-	if err := checkTrayHost(ctx); err != nil {
+	conn, err := connectTray(ctx)
+	if err != nil {
 		return err
 	}
+	defer conn.Close()
 	binary, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("resolve Docktop executable: %w", err)
@@ -45,7 +47,7 @@ func Run(ctx context.Context, client dockercli.Client, terminal, launcher string
 		open.Disable()
 		refresh := systray.AddMenuItem("Refresh", "Refresh Docker status")
 		systray.AddSeparator()
-		quit := systray.AddMenuItem("Quit", "Quit the Docktop tray")
+		quit := systray.AddMenuItem("Quit", "Quit the tray and open Docktop dashboards")
 
 		go func() {
 			pollCtx, cancel := context.WithCancel(ctx)
@@ -89,6 +91,9 @@ func Run(ctx context.Context, client dockercli.Client, terminal, launcher string
 					systray.Quit()
 					return
 				case <-quit.ClickedCh:
+					if err := quitDashboards(ctx, conn); err != nil {
+						fmt.Fprintln(os.Stderr, "docktop tray: could not notify dashboards:", err)
+					}
 					systray.Quit()
 					return
 				case <-timer.C:
@@ -134,16 +139,11 @@ func Run(ctx context.Context, client dockercli.Client, terminal, launcher string
 
 const watcher = "org.kde.StatusNotifierWatcher"
 
-func checkTrayHost(ctx context.Context) error {
+func checkTrayHost(ctx context.Context, conn *dbus.Conn) error {
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	conn, err := dbus.ConnectSessionBus(dbus.WithContext(ctx))
-	if err != nil {
-		return errors.New("tray needs a desktop D-Bus session")
-	}
-	defer conn.Close()
 	var value dbus.Variant
-	err = conn.Object(watcher, "/StatusNotifierWatcher").
+	err := conn.Object(watcher, "/StatusNotifierWatcher").
 		CallWithContext(ctx, "org.freedesktop.DBus.Properties.Get", 0, watcher, "IsStatusNotifierHostRegistered").
 		Store(&value)
 	if registered, _ := value.Value().(bool); err != nil || !registered {

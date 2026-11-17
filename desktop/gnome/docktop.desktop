@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Docktop
+GenericName=Docker Terminal Manager
+Comment=Monitor and manage Docker
+Exec="@BINDIR@/docktop-gui"
+Icon=docktop
+Terminal=false
+Categories=System;
+Keywords=Docker;Containers;Monitoring;Terminal;
+StartupWMClass=docktop
+StartupNotify=true
+Actions=Tray;
+
+[Desktop Action Tray]
+Name=Start Docktop Tray
+Exec=/usr/bin/systemctl --user --no-block start docktop-tray.service

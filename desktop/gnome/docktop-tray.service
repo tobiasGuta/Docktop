@@ -1,0 +1,9 @@
+[Unit]
+Description=Docktop desktop tray
+PartOf=graphical-session.target
+
+[Service]
+Type=exec
+# The tray asks dashboards to exit on Quit. A service restart only stops the tray.
+KillMode=process
+ExecStart=%h/.local/bin/docktop tray --launcher %h/.local/bin/docktop-gui

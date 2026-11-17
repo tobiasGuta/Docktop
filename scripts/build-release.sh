@@ -27,7 +27,7 @@ for platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
     archive="docktop_${version}_${os}_${arch}.tar.gz"
     CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
         go build -mod=readonly -trimpath -buildvcs=false -ldflags "-X main.version=$version" -o "$staging/docktop" ./cmd/docktop
-    tar -czf "$output/$archive" -C "$staging" docktop -C "$PWD" README.md docs/dashboard.png
+    tar -czf "$output/$archive" -C "$staging" docktop -C "$PWD" README.md docs/dashboard.png docs/linux-tray.md desktop/gnome
     archives+=("$archive")
 done
 

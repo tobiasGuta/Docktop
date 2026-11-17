@@ -6,7 +6,7 @@ Docktop uses your existing Docker CLI and Docker context. The terminal dashboard
 
 ![Docktop dashboard with example containers](docs/dashboard.png)
 
-## What works (v0.14 reviewed MCP client connection)
+## Features
 
 - btop-inspired multi-panel dashboard with container CPU and memory history, per-second container network/block I/O rates, a **separate local Linux host CPU/RAM/GPU summary**, and a dense Docker container list. Two-panel inspection pages remain available for detailed browsing.
 - Cohesive dark canvas with softly contrasted panel surfaces, category-specific accents and an adaptive compact dashboard on narrow terminals. The app paints its own background, including in transparent terminals; graph y-axes still scale to observed peaks and show their true maxima.
@@ -17,7 +17,7 @@ Docktop uses your existing Docker CLI and Docker context. The terminal dashboard
 - Read-only MCP catalog browser with client-side search of server names, titles, and descriptions. Press Enter to inspect sanitized catalog metadata and any advertised tool names and descriptions; the catalog may not include every live tool. MCP, Compose and Hub now have compact, transparent status ribbons with navigation hints.
 - Responsive single-panel mode for narrow terminals. No Docker Desktop or web interface required.
 
-Also supported since v0.3:
+### Docker and MCP workflows
 
 - **Reviewed image-tag removal** (`3`, select a tagged image, `d`): shows exact repository, tag, image ID and Docker context; requires `y` confirmation; rereads the active context and target image reference/ID before invoking `docker image rm --no-prune` without force. Readback checks that the selected tag is absent, reporting blocked or unverified results when appropriate. Removing the last tag also removes the image. Untagged parent images are preserved.
 - **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths. Press Enter to see the project’s containers and access their logs, or `i` to view project details. Requires the Docker Compose CLI plugin.
@@ -89,9 +89,9 @@ docktop tray
 docktop tray --context work
 ```
 
-The tray shows Docker availability and a running-container count for the context it captures on startup. It refreshes every 20 seconds. Its menu offers **Open Docktop**, **Refresh**, and **Quit**. The dashboard uses that same context. If you have a graphical Docktop launcher, use `--launcher /path/to/launcher` to open it directly. The launcher receives `--context <name>`. For a terminal window, use `--terminal /path/to/terminal` to select a terminal executable.
+The tray shows Docker availability, context, and running-container count. Its menu opens Docktop, refreshes status, or exits both the tray and open dashboards in the same desktop session. Closing just the dashboard leaves the tray running.
 
-Tray mode requires a desktop D-Bus session with a StatusNotifierItem host, such as KDE Plasma or [GNOME with AppIndicator support](https://github.com/ubuntu/gnome-shell-extension-appindicator). Start the tray when you want it running. Closing the dashboard leaves the tray available, and **Quit** stops the tray.
+See the [Linux tray guide](docs/linux-tray.md) for terminal and graphical launcher options, Fedora GNOME integration, and troubleshooting.
 
 ## Keyboard controls
 

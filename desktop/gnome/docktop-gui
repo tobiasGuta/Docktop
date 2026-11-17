@@ -1,0 +1,114 @@
+#!/usr/bin/python3
+"""
+Docktop Native Window Wrapper for Fedora / GNOME Shell
+Spawns docktop inside a native Libadwaita / GTK4 / VTE window with Wayland app_id 'docktop'
+so that GNOME displays its dedicated Docktop icon in the dock and app switcher.
+"""
+import os
+import sys
+import gi
+
+gi.require_version('Gtk', '4.0')
+gi.require_version('Adw', '1')
+gi.require_version('Vte', '3.91')
+from gi.repository import GLib, Gtk, Gdk, Adw, Vte, Pango, Gio
+
+# Explicitly set prgname so GTK4 sets Wayland xdg_toplevel app_id = 'docktop'
+GLib.set_prgname('docktop')
+GLib.set_application_name('Docktop')
+
+class DocktopApp(Adw.Application):
+    def __init__(self):
+        super().__init__(
+            application_id=None,
+            flags=Gio.ApplicationFlags.NON_UNIQUE
+        )
+
+    def do_activate(self):
+        # The user service keeps one tray instance across dashboard windows.
+        try:
+            Gio.Subprocess.new(
+                ["/usr/bin/systemctl", "--user", "--no-block", "start", "docktop-tray.service"],
+                Gio.SubprocessFlags.NONE,
+            )
+        except GLib.Error as error:
+            print(f"Could not start Docktop tray: {error.message}", file=sys.stderr)
+
+        win = Adw.ApplicationWindow(application=self, title="Docktop")
+        win.set_default_size(1050, 680)
+
+        # Prefer dark theme to match Docktop TUI aesthetic
+        style_mgr = Adw.StyleManager.get_default()
+        style_mgr.set_color_scheme(Adw.ColorScheme.PREFER_DARK)
+
+        # HeaderBar with title and subtitle
+        header = Adw.HeaderBar()
+        title = Adw.WindowTitle(title="Docktop", subtitle="Docker Terminal Manager")
+        header.set_title_widget(title)
+
+        # Terminal widget
+        term = Vte.Terminal()
+        term.set_mouse_autohide(True)
+        term.set_scrollback_lines(10000)
+
+        # Colors matching Docktop icon background (#101522)
+        bg = Gdk.RGBA()
+        bg.parse('#101522')
+        fg = Gdk.RGBA()
+        fg.parse('#D2D9E2')
+        term.set_color_background(bg)
+        term.set_color_foreground(fg)
+
+        # Monospace font
+        font = Pango.FontDescription.from_string("Monospace 11")
+        term.set_font(font)
+
+        # Keyboard shortcuts (Ctrl+Shift+C / Ctrl+Shift+V)
+        key_ctrl = Gtk.EventControllerKey()
+        def on_key_pressed(controller, keyval, keycode, state):
+            ctrl_shift = (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SHIFT_MASK)
+            if (state & ctrl_shift) == ctrl_shift:
+                if keyval in (Gdk.KEY_C, Gdk.KEY_c):
+                    term.copy_clipboard_format(Vte.Format.TEXT)
+                    return True
+                elif keyval in (Gdk.KEY_V, Gdk.KEY_v):
+                    term.paste_clipboard()
+                    return True
+            return False
+        key_ctrl.connect("key-pressed", on_key_pressed)
+        win.add_controller(key_ctrl)
+
+        # Layout
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(header)
+        box.append(term)
+        term.set_vexpand(True)
+        term.set_hexpand(True)
+        win.set_content(box)
+
+        # Target executable
+        binary = os.path.expanduser("~/.local/bin/docktop")
+        cmd = [binary] + sys.argv[1:]
+
+        # Spawn docktop process in terminal
+        term.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            None,
+            cmd,
+            None,
+            GLib.SpawnFlags.DEFAULT,
+            None,
+            None,
+            -1,
+            None,
+            None
+        )
+
+        # Close window when docktop process exits
+        term.connect("child-exited", lambda t, s: win.close())
+
+        win.present()
+
+if __name__ == "__main__":
+    app = DocktopApp()
+    app.run([])

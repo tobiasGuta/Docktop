@@ -66,6 +66,10 @@ func run(args []string) error {
 		defer stop()
 		return tray.Run(ctx, client, terminal, launcher)
 	}
-	_, err := tea.NewProgram(tui.NewWithClient(client), tea.WithAltScreen()).Run()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	program := tea.NewProgram(tui.NewWithClient(client), tea.WithAltScreen())
+	tray.WatchQuit(ctx, program.Quit)
+	_, err := program.Run()
 	return err
 }
