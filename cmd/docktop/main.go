@@ -34,9 +34,10 @@ func run(args []string) error {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	showVersion := flags.Bool("version", false, "Print the Docktop version")
 	dockerContext := flags.String("context", "", "Docker context (defaults to the active context)")
-	var terminal *string
+	var terminal, launcher string
 	if trayMode {
-		terminal = flags.String("terminal", "", "Terminal executable for opening the dashboard")
+		flags.StringVar(&terminal, "terminal", "", "Terminal executable for opening the dashboard")
+		flags.StringVar(&launcher, "launcher", "", "Dashboard executable that accepts --context")
 	}
 	flags.Usage = func() {
 		fmt.Fprintf(flags.Output(), "Usage: %s [options]\n", name)
@@ -63,7 +64,7 @@ func run(args []string) error {
 	if trayMode {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
-		return tray.Run(ctx, client, *terminal)
+		return tray.Run(ctx, client, terminal, launcher)
 	}
 	_, err := tea.NewProgram(tui.NewWithClient(client), tea.WithAltScreen()).Run()
 	return err

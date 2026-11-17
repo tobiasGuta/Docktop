@@ -1,14 +1,10 @@
 package tray
 
 import (
-	"bytes"
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
-	"image"
-	"image/color"
-	"image/draw"
-	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +17,10 @@ import (
 
 const refreshInterval = 20 * time.Second
 
-func Run(ctx context.Context, client dockercli.Client, terminal string) error {
+//go:embed docktop.png
+var docktopIcon []byte
+
+func Run(ctx context.Context, client dockercli.Client, terminal, launcher string) error {
 	if err := checkTrayHost(ctx); err != nil {
 		return err
 	}
@@ -29,19 +28,19 @@ func Run(ctx context.Context, client dockercli.Client, terminal string) error {
 	if err != nil {
 		return fmt.Errorf("resolve Docktop executable: %w", err)
 	}
-	launch, err := terminalLauncher(terminal)
-	if err != nil && terminal != "" {
+	launch, err := dashboardLauncher(terminal, launcher)
+	if err != nil && (terminal != "" || launcher != "") {
 		return err
 	}
 
 	systray.Run(func() {
 		systray.SetTitle("Docktop")
-		systray.SetIcon(trayIcon(false))
+		systray.SetIcon(docktopIcon)
 		status := systray.AddMenuItem("Checking Docker…", "")
 		status.Disable()
-		open := systray.AddMenuItem("Open Docktop", "Open the dashboard in a terminal")
+		open := systray.AddMenuItem("Open Docktop", "Open the Docktop dashboard")
 		if launch == nil {
-			open.SetTitle("Open Docktop (terminal unavailable)")
+			open.SetTitle("Open Docktop (launcher unavailable)")
 		}
 		open.Disable()
 		refresh := systray.AddMenuItem("Refresh", "Refresh Docker status")
@@ -109,7 +108,6 @@ func Run(ctx context.Context, client dockercli.Client, terminal string) error {
 							open.Enable()
 						}
 					}
-					systray.SetIcon(trayIcon(result.err == nil))
 					systray.SetTooltip("Docktop · " + label)
 					status.SetTitle(label)
 				case <-open.ClickedCh:
@@ -124,7 +122,7 @@ func Run(ctx context.Context, client dockercli.Client, terminal string) error {
 				case err := <-launchErrors:
 					launching = false
 					if err != nil {
-						status.SetTitle("Terminal launch failed")
+						status.SetTitle("Dashboard launch failed")
 						fmt.Fprintln(os.Stderr, "docktop tray:", err)
 					}
 				}
@@ -152,6 +150,22 @@ func checkTrayHost(ctx context.Context) error {
 		return errors.New("no desktop tray host found. Enable a StatusNotifierItem host such as the GNOME AppIndicator extension")
 	}
 	return nil
+}
+
+func dashboardLauncher(terminal, launcher string) (func(string, string) *exec.Cmd, error) {
+	if launcher == "" {
+		return terminalLauncher(terminal)
+	}
+	if terminal != "" {
+		return nil, errors.New("choose one of --launcher or --terminal")
+	}
+	path, err := exec.LookPath(launcher)
+	if err != nil {
+		return nil, fmt.Errorf("resolve dashboard launcher: %w", err)
+	}
+	return func(_ string, dockerContext string) *exec.Cmd {
+		return exec.Command(path, "--context", dockerContext)
+	}, nil
 }
 
 func terminalLauncher(preferred string) (func(string, string) *exec.Cmd, error) {
@@ -182,26 +196,4 @@ func terminalLauncher(preferred string) (func(string, string) *exec.Cmd, error) 
 		}, nil
 	}
 	return nil, errors.New("no compatible terminal found. Use --terminal with a terminal executable")
-}
-
-func trayIcon(available bool) []byte {
-	ink := color.NRGBA{R: 156, G: 163, B: 175, A: 255}
-	if available {
-		ink = color.NRGBA{R: 55, G: 210, B: 175, A: 255}
-	}
-	icon := image.NewNRGBA(image.Rect(0, 0, 24, 24))
-	source := image.NewUniform(ink)
-	for _, block := range []image.Rectangle{
-		image.Rect(9, 3, 15, 9),
-		image.Rect(2, 10, 8, 16),
-		image.Rect(9, 10, 15, 16),
-		image.Rect(16, 10, 22, 16),
-		image.Rect(3, 18, 21, 21),
-		image.Rect(6, 21, 18, 22),
-	} {
-		draw.Draw(icon, block, source, image.Point{}, draw.Src)
-	}
-	var data bytes.Buffer
-	_ = png.Encode(&data, icon)
-	return data.Bytes()
 }

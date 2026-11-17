@@ -89,7 +89,7 @@ docktop tray
 docktop tray --context work
 ```
 
-The tray shows Docker availability and a running-container count for the context it captures on startup. It refreshes every 20 seconds. Its menu offers **Open Docktop**, **Refresh**, and **Quit**. The dashboard opens in a terminal with that same context. Use `--terminal /path/to/terminal` to select a terminal executable, or `docktop --context work` to open the dashboard directly.
+The tray shows Docker availability and a running-container count for the context it captures on startup. It refreshes every 20 seconds. Its menu offers **Open Docktop**, **Refresh**, and **Quit**. The dashboard uses that same context. If you have a graphical Docktop launcher, use `--launcher /path/to/launcher` to open it directly. The launcher receives `--context <name>`. For a terminal window, use `--terminal /path/to/terminal` to select a terminal executable.
 
 Tray mode requires a desktop D-Bus session with a StatusNotifierItem host, such as KDE Plasma or [GNOME with AppIndicator support](https://github.com/ubuntu/gnome-shell-extension-appindicator). Start the tray when you want it running. Closing the dashboard leaves the tray available, and **Quit** stops the tray.
 
