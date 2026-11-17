@@ -131,13 +131,7 @@ func (m Model) enginePanel(w, h int) []string {
 	if contextName == "" {
 		contextName = "connecting"
 	}
-	status := green.Render("● READY")
-	if m.busy {
-		status = amber.Render("◌ SYNCING")
-	}
-	if m.snapshot.Context == "" {
-		status = muted.Render("○ WAITING")
-	}
+	status := m.engineStatus()
 	lines = append(lines, "", cyan.Render("DOCKER ENGINE")+"  "+status)
 	lines = append(lines, muted.Render("CTX ")+plain(contextName, max(1, w-6)))
 	lines = append(lines, fmt.Sprintf("RUNNING %d/%d   IMG %d   VOL %d", running, len(m.snapshot.Containers), len(m.snapshot.Images), len(m.snapshot.Volumes)))
@@ -436,4 +430,3 @@ func niceScale(peak, minimum float64) float64 {
 	}
 	return peak
 }
-

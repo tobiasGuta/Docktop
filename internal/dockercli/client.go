@@ -1,6 +1,7 @@
 package dockercli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,17 +20,86 @@ type Runner interface {
 
 type ExecRunner struct{}
 
-func (ExecRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("docker %s: %w: %s", args[0], err, Clean(string(out), 250))
-	}
-	return out, nil
+const (
+	maxCommandOutput    = 8 << 20
+	maxLogsOutput       = 18_000
+	maxDiagnosticOutput = 4096
+)
+
+type cappedOutput struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
 }
 
-type Client struct{ Runner Runner }
+func (b *cappedOutput) Write(p []byte) (int, error) {
+	keep := min(len(p), b.limit-b.buffer.Len())
+	b.truncated = b.truncated || keep < len(p)
+	_, _ = b.buffer.Write(p[:keep])
+	return len(p), nil
+}
+
+func (ExecRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
+	if len(args) == 0 {
+		return nil, errors.New("no Docker command specified")
+	}
+	command := args
+	if len(args) > 2 && args[0] == "--context" {
+		command = args[2:]
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.WaitDelay = time.Second
+	out := &cappedOutput{limit: maxCommandOutput}
+	diagnostics := &cappedOutput{limit: maxDiagnosticOutput}
+	cmd.Stdout, cmd.Stderr = out, diagnostics
+	logs := command[0] == "logs"
+	if logs {
+		out.limit = maxLogsOutput
+		// Docker writes container stderr to the CLI's stderr stream.
+		cmd.Stderr = out
+	}
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("docker %s: %w: %s", command[0], err, Clean(diagnostics.buffer.String(), 250))
+	}
+	if out.truncated {
+		if !logs {
+			return nil, errors.New("Docker command output exceeded size limit")
+		}
+		return out.buffer.Bytes(), errLogsTruncated
+	}
+	return out.buffer.Bytes(), nil
+}
+
+var errLogsTruncated = errors.New("Docker log output truncated")
+
+type Client struct {
+	Runner  Runner
+	Context string
+}
 
 func New() Client { return Client{Runner: ExecRunner{}} }
+
+func (c Client) CurrentContext(ctx context.Context) (string, error) {
+	if c.Context != "" {
+		if !validSnapshotContext(c.Context) {
+			return "", errors.New("Docker context name invalid")
+		}
+		return c.Context, nil
+	}
+	raw, err := c.run(ctx, "context", "show")
+	return parseContext(raw, err)
+}
+
+func parseContext(raw []byte, err error) (string, error) {
+	if err != nil {
+		return "", errors.New("Docker context unavailable")
+	}
+	name := strings.TrimSpace(string(raw))
+	if !validSnapshotContext(name) {
+		return "", errors.New("Docker context name invalid")
+	}
+	return name, nil
+}
 
 func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
@@ -38,12 +108,13 @@ func (c Client) run(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 type Container struct {
-	ID     string `json:"ID"`
-	Names  string `json:"Names"`
-	Image  string `json:"Image"`
-	Status string `json:"Status"`
-	State  string `json:"State"`
-	Ports  string `json:"Ports"`
+	ID             string `json:"ID"`
+	Names          string `json:"Names"`
+	Image          string `json:"Image"`
+	Status         string `json:"Status"`
+	State          string `json:"State"`
+	Ports          string `json:"Ports"`
+	ComposeProject string `json:"ComposeProject"`
 }
 type Image struct {
 	ID         string `json:"ID"`
@@ -71,6 +142,7 @@ type Usage struct {
 	NetIO    string `json:"NetIO"`
 	BlockIO  string `json:"BlockIO"`
 }
+
 // QueryTiming is one read-only Docker command latency from the latest snapshot.
 // Step names come from Docktop, never from Docker output or CLI arguments.
 type QueryTiming struct {
@@ -142,18 +214,20 @@ func (c Client) Snapshot(ctx context.Context) (s Snapshot, snapshotErr error) {
 		return data, err
 	}
 
-	raw, err := read("context", "context", "show")
-	if err != nil {
-		return s, errors.New("Docker context unavailable")
-	}
-	name := strings.TrimSpace(string(raw))
-	if !validSnapshotContext(name) {
+	name := c.Context
+	if name == "" {
+		raw, err := read("context", "context", "show")
+		name, err = parseContext(raw, err)
+		if err != nil {
+			return s, err
+		}
+	} else if !validSnapshotContext(name) {
 		return s, errors.New("Docker context name invalid")
 	}
 	s.Context = name
 
 	// Every remaining query is pinned to the same captured context.
-	raw, err = read("containers", "--context", name, "ps", "-a", "--format", "{{json .}}")
+	raw, err := read("containers", "--context", name, "ps", "-a", "--no-trunc", "--format", containerFormat)
 	if err != nil {
 		return s, errors.New("Docker container listing unavailable")
 	}
@@ -167,10 +241,10 @@ func (c Client) Snapshot(ctx context.Context) (s Snapshot, snapshotErr error) {
 		args []string
 		read func([]byte) error
 	}{
-		{"images", []string{"image", "ls", "--format", "{{json .}}"}, func(b []byte) error { v, e := decodeLines[Image](b); s.Images = v; return e }},
-		{"networks", []string{"network", "ls", "--format", "{{json .}}"}, func(b []byte) error { v, e := decodeLines[Network](b); s.Networks = v; return e }},
+		{"images", []string{"image", "ls", "--no-trunc", "--format", "{{json .}}"}, func(b []byte) error { v, e := decodeLines[Image](b); s.Images = v; return e }},
+		{"networks", []string{"network", "ls", "--no-trunc", "--format", "{{json .}}"}, func(b []byte) error { v, e := decodeLines[Network](b); s.Networks = v; return e }},
 		{"volumes", []string{"volume", "ls", "--format", "{{json .}}"}, func(b []byte) error { v, e := decodeLines[Volume](b); s.Volumes = v; return e }},
-		{"stats", []string{"stats", "--no-stream", "--format", "{{json .}}"}, func(b []byte) error {
+		{"stats", []string{"stats", "--no-stream", "--no-trunc", "--format", "{{json .}}"}, func(b []byte) error {
 			v, e := decodeLines[Usage](b)
 			for _, u := range v {
 				s.Stats[u.ID] = u
@@ -192,10 +266,14 @@ func (c Client) Snapshot(ctx context.Context) (s Snapshot, snapshotErr error) {
 	return s, nil
 }
 
+const containerFormat = `{"ID":{{json .ID}},"Names":{{json .Names}},"Image":{{json .Image}},` +
+	`"Status":{{json .Status}},"State":{{json .State}},"Ports":{{json .Ports}},` +
+	`"ComposeProject":{{json (.Label "com.docker.compose.project")}}}`
+
 var idRE = regexp.MustCompile(`^[a-fA-F0-9]{12,64}$`)
 
 // Change allows only explicitly supported container operations on Docker IDs.
-func (c Client) Change(ctx context.Context, operation, id string) error {
+func (c Client) Change(ctx context.Context, dockerContext, operation, id string) error {
 	if !idRE.MatchString(id) {
 		return errors.New("invalid container ID")
 	}
@@ -204,19 +282,33 @@ func (c Client) Change(ctx context.Context, operation, id string) error {
 	default:
 		return errors.New("unsupported operation")
 	}
-	_, err := c.run(ctx, operation, id)
-	return err
+	active, err := c.CurrentContext(ctx)
+	if err != nil || active != dockerContext {
+		return errors.New("Docker context changed or is unavailable. Refresh and review the container again.")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	if _, err := c.Runner.Run(ctx, "--context", dockerContext, operation, "--", id); err != nil {
+		return errors.New("Docker did not confirm the operation. Check the container state before retrying.")
+	}
+	return nil
 }
 
-func (c Client) Logs(ctx context.Context, id string) (string, error) {
+func (c Client) Logs(ctx context.Context, dockerContext, id string) (string, error) {
+	if !validSnapshotContext(dockerContext) {
+		return "", errors.New("invalid Docker context")
+	}
 	if !idRE.MatchString(id) {
 		return "", errors.New("invalid container ID")
 	}
-	out, err := c.run(ctx, "logs", "--tail", "100", "--timestamps", id)
-	if err != nil {
+	out, err := c.run(ctx, "--context", dockerContext, "logs", "--tail", "100", "--timestamps", "--", id)
+	if err != nil && !errors.Is(err, errLogsTruncated) {
 		return "", err
 	}
-	return Clean(string(out), 18000), nil
+	if errors.Is(err, errLogsTruncated) || len(out) > maxLogsOutput {
+		return "[Log output truncated]\n" + Clean(string(out), maxLogsOutput), nil
+	}
+	return Clean(string(out), maxLogsOutput), nil
 }
 
 func (c Client) MCP(ctx context.Context, filter string) (string, error) {
@@ -260,4 +352,16 @@ func Clean(input string, max int) string {
 		}
 	}
 	return b.String()
+}
+
+// RunningContainerCount uses a single, read-only Docker command for the tray.
+func (c Client) RunningContainerCount(ctx context.Context, dockerContext string) (int, error) {
+	if !validSnapshotContext(dockerContext) {
+		return 0, errors.New("invalid Docker context")
+	}
+	raw, err := c.run(ctx, "--context", dockerContext, "ps", "--quiet", "--filter", "status=running")
+	if err != nil {
+		return 0, err
+	}
+	return len(bytes.Fields(raw)), nil
 }

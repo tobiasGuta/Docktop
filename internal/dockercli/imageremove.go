@@ -104,8 +104,8 @@ func (c Client) RemoveImageTag(ctx context.Context, target ImageRemovalTarget) I
 	ctx, cancel := context.WithTimeout(ctx, 35*time.Second)
 	defer cancel()
 
-	current, err := c.Runner.Run(ctx, "context", "show")
-	if err != nil || strings.TrimSpace(string(current)) != target.Context {
+	current, err := c.CurrentContext(ctx)
+	if err != nil || current != target.Context {
 		return blocked("Docker context changed or is unavailable; no removal attempted.")
 	}
 	listArgs := []string{"--context", target.Context, "image", "ls", "--no-trunc", "--format", "{{json .}}"}
@@ -121,8 +121,8 @@ func (c Client) RemoveImageTag(ctx context.Context, target ImageRemovalTarget) I
 	if count != 1 || !same {
 		return blocked("The selected image reference or ID changed; refresh and review again.")
 	}
-	// The explicit -- ends option parsing. Never pass --force or --no-prune.
-	_, removalErr := c.Runner.Run(ctx, "--context", target.Context, "image", "rm", "--", target.Reference())
+	// Preserve untagged parents and end option parsing before the image reference.
+	_, removalErr := c.Runner.Run(ctx, "--context", target.Context, "image", "rm", "--no-prune", "--", target.Reference())
 
 	// Read back even if Docker reports an error. Never infer final image state
 	// from the CLI exit status alone, and never render untrusted CLI stderr.

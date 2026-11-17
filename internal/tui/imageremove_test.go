@@ -12,6 +12,7 @@ import (
 func imageReviewFixture() Model {
 	m:=testModel()
 	m.page=2
+	m.busy=false
 	m.snapshot.Images=[]dockercli.Image{{ID:"abcdefabcdef",Repository:"hello-world",Tag:"latest",Size:"21.8kB"}}
 	return m
 }

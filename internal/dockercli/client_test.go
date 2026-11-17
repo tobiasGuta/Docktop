@@ -46,19 +46,19 @@ func TestSnapshot(t *testing.T) {
 }
 func TestChangeRejectsUnsafeArguments(t *testing.T) {
 	f := &fakeRunner{responses: map[string]string{}}
-	c := Client{Runner: f}
+	c := Client{Runner: f, Context: "default"}
 	for _, p := range [][2]string{{"rm", "abcdefabcdef"}, {"stop", "--all"}, {"start", "bad;command"}} {
-		if err := c.Change(context.Background(), p[0], p[1]); err == nil {
+		if err := c.Change(context.Background(), "default", p[0], p[1]); err == nil {
 			t.Fatalf("accepted %v", p)
 		}
 	}
 	if len(f.calls) != 0 {
 		t.Fatal("ran rejected request")
 	}
-	if err := c.Change(context.Background(), "restart", "abcdefabcdef"); err != nil {
+	if err := c.Change(context.Background(), "default", "restart", "abcdefabcdef"); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(f.calls[0], []string{"restart", "abcdefabcdef"}) {
+	if !reflect.DeepEqual(f.calls[0], []string{"--context", "default", "restart", "--", "abcdefabcdef"}) {
 		t.Fatal(f.calls)
 	}
 }
@@ -137,5 +137,16 @@ func TestSnapshotErrorsNeverExposeDockerDiagnostics(t *testing.T) {
 	_, err = (Client{Runner: f}).Snapshot(context.Background())
 	if err == nil || strings.Contains(err.Error(), "PRIVATE_DOCKER_SECRET") {
 		t.Fatalf("unsafe early failure: %v", err)
+	}
+}
+
+func TestChangeChecksReviewedDockerContext(t *testing.T) {
+	f := &fakeRunner{responses: map[string]string{"context show": "other\n"}}
+	c := Client{Runner: f}
+	if err := c.Change(context.Background(), "default", "stop", "abcdefabcdef"); err == nil {
+		t.Fatal("expected a fresh review after the context changed")
+	}
+	if len(f.calls) != 1 || !reflect.DeepEqual(f.calls[0], []string{"context", "show"}) {
+		t.Fatalf("unexpected command dispatch: %q", f.calls)
 	}
 }

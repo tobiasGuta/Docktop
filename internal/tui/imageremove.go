@@ -8,9 +8,9 @@ import (
 )
 
 type imageRemovalOverlay struct {
-	open   bool
-	phase  string // review, applying, result
-	target dockercli.ImageRemovalTarget
+	open    bool
+	phase   string // review, applying, result
+	target  dockercli.ImageRemovalTarget
 	outcome string
 	notice  string
 }
@@ -34,6 +34,9 @@ func (m Model) imageRemovalKey(key string) (tea.Model, tea.Cmd) {
 		case "n", "esc":
 			m.imageRemoval = imageRemovalOverlay{}
 		case "y", "Y":
+			if !m.actionReviewFits(m.imageReviewLines()) {
+				return m, nil
+			}
 			p.phase = "applying"
 			return m, removeImageTag(m.client, p.target)
 		}
@@ -41,7 +44,7 @@ func (m Model) imageRemovalKey(key string) (tea.Model, tea.Cmd) {
 		if key == "enter" || key == "esc" || key == "q" {
 			m.imageRemoval = imageRemovalOverlay{}
 		}
-	// While applying, no key can trigger another Docker write.
+		// While applying, no key can trigger another Docker write.
 	}
 	return m, nil
 }
@@ -57,8 +60,8 @@ func (m Model) imageRemovalResult(v imageRemovalDoneMsg) (Model, tea.Cmd) {
 	if p.outcome == "verified" {
 		// Refresh the ordinary snapshot only after Docker readback verified
 		// that the selected repository:tag no longer exists.
-		m.busy = true
-		return m, poll(m.client)
+		cmd := m.refresh(true)
+		return m, cmd
 	}
 	return m, nil
 }
@@ -66,6 +69,9 @@ func (m Model) imageRemovalResult(v imageRemovalDoneMsg) (Model, tea.Cmd) {
 func (m Model) imageRemovalFooter() string {
 	switch m.imageRemoval.phase {
 	case "review":
+		if !m.actionReviewFits(m.imageReviewLines()) {
+			return "[Esc] Cancel  •  Enlarge terminal"
+		}
 		return "[y] Remove this exact image tag  [n/Esc] Cancel"
 	case "applying":
 		return "[Wait] Checking context, target and removal readback"
@@ -74,31 +80,27 @@ func (m Model) imageRemovalFooter() string {
 	}
 }
 
+func (m Model) imageReviewLines() []string {
+	target := m.imageRemoval.target
+	return reviewLines(m.width,
+		"Image: "+target.Reference(),
+		"Context: "+target.Context,
+		"ID: "+target.ID,
+		"Removing the last tag also removes the image.",
+		"Untagged parent images are preserved.",
+	)
+}
+
 func (m Model) imageRemovalView(w, h int) string {
 	p := m.imageRemoval
-	ref := p.target.Reference()
-	lines := []string{
-		amber.Render("EXACT IMAGE REMOVAL REVIEW"), "",
-		"Repository: " + plain(p.target.Repository, max(8, w-15)),
-		"Tag:        " + plain(p.target.Tag, max(8, w-15)),
-		"Image ID:   " + plain(p.target.ID, max(8, w-15)),
-		"Context:    " + plain(p.target.Context, max(8, w-15)),
-		"",
-		"Command: docker --context " + plain(p.target.Context, max(8, w-15)) + " image rm -- " + plain(ref, max(8, w-15)),
-		"",
-		"No force, pruning, container changes or volume deletion.",
-		"Removing a tag may retain image layers referenced elsewhere.",
-		"Context and exact reference/ID are checked before execution.",
-	}
+	var lines []string
 	switch p.phase {
 	case "review":
-		lines = append(lines, "", red.Render("Press y to attempt removal; n/Esc cancels."))
+		lines = m.imageReviewLines()
 	case "applying":
-		lines = append(lines, "", amber.Render("Validating and applying approved operation..."))
+		lines = []string{amber.Render("Checking target and removal result…")}
 	case "result":
-		lines = append(lines, "", "RESULT: "+plain(p.outcome, 24),
-			plain(p.notice, max(8, w-4)), "",
-			"VERIFIED means the selected tag is absent on readback, not that Docker reported success.")
+		lines = append([]string{"RESULT: " + p.outcome}, reviewLines(w, p.notice)...)
 	}
 	return frame("IMAGES / REVIEW TAG REMOVAL", lines, w, h)
 }

@@ -11,9 +11,9 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Resolve modules
-        run: go mod tidy
+        run: go mod tidy -diff
       - name: Test
-        run: go test ./...
+        run: go test -race -mod=readonly ./...
       - name: Read-only rendering benchmarks
         run: go test ./internal/tui -run '^$' -bench '^(BenchmarkDashboardView|BenchmarkBrailleGraphs|BenchmarkDashboardBody|BenchmarkCanvasPaint|BenchmarkPanelFrame)$' -benchmem -benchtime=300ms -count=1
       - name: Vet

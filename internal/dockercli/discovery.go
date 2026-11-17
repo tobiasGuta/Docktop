@@ -20,8 +20,11 @@ type ComposeProject struct {
 	ConfigFiles string `json:"ConfigFiles"`
 }
 
-func (c Client) ComposeProjects(ctx context.Context) ([]ComposeProject, error) {
-	raw, err := c.run(ctx, "compose", "ls", "--all", "--format", "json")
+func (c Client) ComposeProjects(ctx context.Context, dockerContext string) ([]ComposeProject, error) {
+	if !validSnapshotContext(dockerContext) {
+		return nil, errors.New("invalid Docker context")
+	}
+	raw, err := c.run(ctx, "--context", dockerContext, "compose", "ls", "--all", "--format", "json")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,14 @@ func (c Client) SearchHub(ctx context.Context, query string) ([]HubImage, error)
 	if !searchRE.MatchString(query) {
 		return nil, errors.New("search must be 1-80 letters, numbers, dots, hyphens or underscores")
 	}
-	raw, err := c.run(ctx, "search", "--limit", "15", "--format", "{{json .}}", query)
+	args := []string{"search", "--limit", "15", "--format", "{{json .}}", query}
+	if c.Context != "" {
+		if !validSnapshotContext(c.Context) {
+			return nil, errors.New("invalid Docker context")
+		}
+		args = append([]string{"--context", c.Context}, args...)
+	}
+	raw, err := c.run(ctx, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +114,10 @@ func (c Client) PullHub(ctx context.Context, name, dockerContext string) error {
 // InspectSummary only uses selected fields from Docker's inspect response.
 // Environment *values* and container labels are never exposed, even if their
 // names look harmless, since they commonly contain credentials.
-func (c Client) InspectSummary(ctx context.Context, kind, id string) (string, error) {
+func (c Client) InspectSummary(ctx context.Context, dockerContext, kind, id string) (string, error) {
+	if !validSnapshotContext(dockerContext) {
+		return "", errors.New("invalid Docker context")
+	}
 	switch kind {
 	case "container":
 		if !idRE.MatchString(id) {
@@ -124,7 +137,7 @@ func (c Client) InspectSummary(ctx context.Context, kind, id string) (string, er
 	if kind == "volume" {
 		args = []string{"volume", "inspect", id}
 	}
-	raw, err := c.run(ctx, args...)
+	raw, err := c.run(ctx, append([]string{"--context", dockerContext}, args...)...)
 	if err != nil {
 		return "", err
 	}
@@ -227,7 +240,7 @@ func (c Client) InspectSummary(ctx context.Context, kind, id string) (string, er
 		appendLine("Driver", get("Driver"))
 		appendLine("Mountpoint", get("Mountpoint"))
 		// Query only when a user inspects a volume; never poll every volume.
-		attached, findErr := c.run(ctx, "ps", "-a", "--filter", "volume="+id, "--format", "{{json .}}")
+		attached, findErr := c.run(ctx, "--context", dockerContext, "ps", "-a", "--filter", "volume="+id, "--format", "{{json .}}")
 		b.WriteString("\nATTACHED CONTAINERS\n")
 		if findErr != nil {
 			b.WriteString("(attachment query unavailable)\n")

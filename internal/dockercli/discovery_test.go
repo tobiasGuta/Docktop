@@ -8,7 +8,7 @@ import (
 
 func TestComposeProjects(t *testing.T) {
 	f := &fakeRunner{responses: map[string]string{"compose ls": `[{"Name":"test","Status":"running(2)","ConfigFiles":"/tmp/compose.yaml"}]`}}
-	v, e := (Client{Runner: f}).ComposeProjects(context.Background())
+	v, e := (Client{Runner: f}).ComposeProjects(context.Background(), "default")
 	if e != nil || len(v) != 1 || v[0].Name != "test" {
 		t.Fatalf("%+v %v", v, e)
 	}
@@ -38,7 +38,7 @@ func TestHubSearchAndPullAdmission(t *testing.T) {
 }
 func TestInspectRedactsAllValues(t *testing.T) {
 	f := &fakeRunner{responses: map[string]string{"inspect --type": `[{"Id":"abcdefabcdef","Name":"/api","Config":{"Image":"nginx","Env":["API_KEY=super-secret","NORMAL=also-secret"]},"State":{"Status":"running","Health":{"Status":"healthy"}},"Mounts":[{"Type":"volume","Source":"/src","Destination":"/dst"}],"NetworkSettings":{"Networks":{"app":{}}}}]`}}
-	v, e := (Client{Runner: f}).InspectSummary(context.Background(), "container", "abcdefabcdef")
+	v, e := (Client{Runner: f}).InspectSummary(context.Background(), "default", "container", "abcdefabcdef")
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -53,7 +53,7 @@ func TestInspectRedactsAllValues(t *testing.T) {
 }
 func TestInspectRejectsUnsafe(t *testing.T) {
 	f := &fakeRunner{}
-	_, e := (Client{Runner: f}).InspectSummary(context.Background(), "network", "--host")
+	_, e := (Client{Runner: f}).InspectSummary(context.Background(), "default", "network", "--host")
 	if e == nil || len(f.calls) != 0 {
 		t.Fatal("unsafe resource executed or error absent")
 	}

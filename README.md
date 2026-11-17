@@ -2,7 +2,9 @@
 
 **A lightweight, btop-inspired terminal dashboard for Docker Engine and the Docker MCP Catalog.**
 
-Docktop runs on your existing Docker CLI and active Docker context. Unlike Docker Desktop for Linux, it does not start a separate VM or background Docktop service. Designed for Fedora; compatible with other Linux and macOS terminals.
+Docktop uses your existing Docker CLI and Docker context. The terminal dashboard runs as a foreground process. An optional Linux tray companion provides a quick Docker status check and opens the dashboard. Designed for Fedora and compatible with other Linux and macOS terminals.
+
+![Docktop dashboard with example containers](docs/dashboard.png)
 
 ## What works (v0.14 reviewed MCP client connection)
 
@@ -17,8 +19,8 @@ Docktop runs on your existing Docker CLI and active Docker context. Unlike Docke
 
 Also supported since v0.3:
 
-- **Reviewed image-tag removal** (`3`, select a tagged image, `d`): shows exact repository, tag, image ID and Docker context; requires `y` confirmation; rereads the active context and target image reference/ID before invoking ordinary `docker image rm` without force. Readback checks that the selected tag is absent, reporting blocked or unverified results when appropriate. Dangling/untagged images are intentionally unsupported; removing one tag need not reclaim the underlying image layers.
-- **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths; requires Docker Compose CLI plugin.
+- **Reviewed image-tag removal** (`3`, select a tagged image, `d`): shows exact repository, tag, image ID and Docker context; requires `y` confirmation; rereads the active context and target image reference/ID before invoking `docker image rm --no-prune` without force. Readback checks that the selected tag is absent, reporting blocked or unverified results when appropriate. Removing the last tag also removes the image. Untagged parent images are preserved.
+- **Compose discovery** (`7`): on-demand, read-only `docker compose ls --all` project list, statuses and config paths. Press Enter to see the project’s containers and access their logs, or `i` to view project details. Requires the Docker Compose CLI plugin.
 - **Docker Hub search** (`8`): press `/` to search the public catalog on demand and browse descriptions, stars and official status. Press `p` to request an image pull, which displays the target and requires explicit `y` confirmation. Pulls may take several minutes and download sizable data.
 - **Deep container inspection** (`2`, then `Enter`): health, mount attachments and networks. Environment *keys* are displayed with **all values redacted**, not only those with obvious secret names. `Enter` also discovers selected network attachments and volume usage on demand. These queries do not modify Docker resources.
 - **MCP profile visibility** (`6`, then `p`): on-demand, read-only list of profiles. Press `a` to list configured MCP servers across profiles.
@@ -54,12 +56,20 @@ The graphs use a 60-sample rolling window at roughly five-second intervals. Netw
 - `docker` CLI with an accessible Docker Engine (including rootless and remote contexts)
 - Optional: Docker MCP CLI plugin and pulled `mcp/docker-mcp-catalog:latest`
 
-## Run
+## Install and run
+
+Download a Linux or macOS archive from [Releases](https://github.com/tobiasGuta/Docktop/releases) when a tagged build is available. The release includes a `SHA256SUMS` file. You can also install from source with Go 1.24 or later:
+
+```bash
+go install github.com/tobiasGuta/Docktop/cmd/docktop@latest
+docktop
+```
+
+To build from a checkout:
 
 ```bash
 git clone https://github.com/tobiasGuta/Docktop.git
 cd Docktop
-go mod tidy
 go run ./cmd/docktop
 ```
 
@@ -72,19 +82,31 @@ go build -o docktop ./cmd/docktop
 
 No Docker state is modified during startup or by browsing dashboards. The first Go build downloads Bubble Tea and Lip Gloss dependencies.
 
+### Linux desktop tray
+
+```bash
+docktop tray
+docktop tray --context work
+```
+
+The tray shows Docker availability and a running-container count for the context it captures on startup. It refreshes every 20 seconds. Its menu offers **Open Docktop**, **Refresh**, and **Quit**. The dashboard opens in a terminal with that same context. Use `--terminal /path/to/terminal` to select a terminal executable, or `docktop --context work` to open the dashboard directly.
+
+Tray mode requires a desktop D-Bus session with a StatusNotifierItem host, such as KDE Plasma or [GNOME with AppIndicator support](https://github.com/ubuntu/gnome-shell-extension-appindicator). Start the tray when you want it running. Closing the dashboard leaves the tray available, and **Quit** stops the tray.
+
 ## Keyboard controls
 
 | Key | Function |
 | --- | --- |
 | `1`–`8`, `Tab` / `Shift+Tab` | Switch Dashboard, Containers, Images, Networks, Volumes, MCP, Compose and Hub |
 | `↑`/`↓` or `j`/`k`, `PgUp`/`PgDn`, `Home`/`End` | Navigate lists and logs |
-| `Enter` | Show details; on Containers, Networks and Volumes requests an additional read-only inspection |
+| `Enter` | Inspect the selected item. On Compose, open its container list and use `Esc` to return. |
+| `i` | On Compose, show project status and config paths |
 | `r` | Refresh Docker view or reload MCP catalog |
 | `l` | Show last 100 log lines for selected container (Containers tab) |
 | `s` | Start or stop selected container, with explicit confirmation |
 | `R` | Restart selected container, with explicit confirmation |
 | `y` / `n` | Confirm or cancel a state change |
-| `/` | Filter MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
+| `/` | Filter containers by name, image, or ID. Filter the MCP catalog locally; on Docker Hub, enter a search term and press Enter to search online. `Ctrl+U` clears inputs |
 | `p` | MCP tab: toggle profiles (read-only). Docker Hub: request selected image pull (requires confirmation) |
 | `a` | MCP tab: toggle configured servers across profiles (read-only); close an inspection with `Esc` first |
 | `i` | MCP tab: show configured client integrations. Press `/` to search and `c` on an eligible client to choose a profile, review, then `y` to connect; `n/Esc` cancels without editing configuration. |
@@ -103,9 +125,9 @@ docker mcp catalog pull mcp/docker-mcp-catalog:latest
 
 ## Design and security
 
-- Docker CLI arguments are passed directly without a shell. The active Docker context and Docker permissions are honored.
+- Docker CLI arguments are passed directly without a shell. Resource reads and writes use the Docker context associated with the displayed item. Docker permissions are honored.
 - Read-only discovery is the default. Container state changes use validated IDs and ask for a `y` confirmation. Image pulls use validated Docker Hub image names, pin the Docker context captured during review and require the same `y` confirmation.
-- No telemetry, credential storage, background Docktop daemon, socket forwarding, or MCP execution. MCP inspection whitelists metadata fields and never prints configuration or secret payloads.
+- Docktop uses Docker’s existing permissions and configuration. The optional tray only reads Docker status. MCP inspection whitelists metadata fields and never prints configuration or secret payloads.
 - External text is sanitized; CLI commands are timeout-limited, logs are bounded, and metric history is capped to 60 samples.
 - **Docker daemon access is highly privileged.** Do not run Docktop as root or mount the Docker socket into untrusted workloads. Confirmation prompts are guardrails, not an OS security boundary.
 - Docker resource metrics are sourced from `docker stats` and do not represent whole-host CPU or RAM usage.
@@ -139,3 +161,7 @@ go build ./cmd/docktop
 ```
 
 The unit tests use fake Docker responses and synthetic Linux host counters; they never interact with your local Docker daemon or running containers.
+
+### Release archives
+
+`scripts/build-release.sh vX.Y.Z dist` builds Linux and macOS archives for amd64 and arm64 and writes their SHA-256 checksums. The release workflow runs when a matching version tag is pushed.

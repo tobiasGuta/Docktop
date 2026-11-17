@@ -26,7 +26,7 @@ func (f *imageRemoveRunner) Run(_ context.Context, args ...string) ([]byte, erro
 		if f.changed {return []byte(f.current),nil}
 		return []byte(f.initial),nil
 	}
-	if key == "--context default image rm -- hello-world:latest" {
+	if key == "--context default image rm --no-prune -- hello-world:latest" {
 		f.changed = true
 		return []byte("Untagged: hello-world:latest"),nil
 	}
@@ -44,7 +44,7 @@ func TestImageTagRemovalUsesExactReferenceNoForceAndReadback(t *testing.T) {
 	f:=&imageRemoveRunner{initial:helloImage,contextName:"default"}
 	r:=(Client{Runner:f}).RemoveImageTag(context.Background(),helloTarget())
 	if r.Outcome!="verified" || len(f.calls)!=4 {t.Fatalf("outcome %+v; calls %#v",r,f.calls)}
-	want:=[]string{"--context","default","image","rm","--","hello-world:latest"}
+	want:=[]string{"--context","default","image","rm","--no-prune","--","hello-world:latest"}
 	if !reflect.DeepEqual(f.calls[2],want) {t.Fatalf("unsafe CLI args %q",f.calls[2])}
 }
 
@@ -70,7 +70,7 @@ func TestImageRemovalBlocksStaleOrUnsafeWithoutWrite(t *testing.T) {
 }
 
 func TestImageRemovalUnverifiedAfterAttemptOrBadReadback(t *testing.T) {
-	f:=&imageRemoveRunner{initial:helloImage,contextName:"default",failAt:"--context default image rm -- hello-world:latest"}
+	f:=&imageRemoveRunner{initial:helloImage,contextName:"default",failAt:"--context default image rm --no-prune -- hello-world:latest"}
 	r:=(Client{Runner:f}).RemoveImageTag(context.Background(),helloTarget())
 	if r.Outcome!="not_removed"||strings.Contains(r.Reason,"PRIVATE_TOKEN") {t.Fatalf("unsafe result %+v",r)}
 	f=&imageRemoveRunner{initial:helloImage,current:helloImage,contextName:"default"}
@@ -114,7 +114,7 @@ func (f *imageRemovalErrorRunner) Run(_ context.Context, args ...string) ([]byte
 			return nil, errors.New("PRIVATE_TOKEN_NOT_FOR_UI")
 		}
 		return []byte(f.after), nil
-	case "--context default image rm -- hello-world:latest":
+	case "--context default image rm --no-prune -- hello-world:latest":
 		f.removeCount++
 		return nil, f.removeErr
 	default:
