@@ -24,8 +24,28 @@ jobs:
         run: |
           bash -n scripts/benchmark-process.sh
           tmpdir=$(mktemp -d)
-          cp "$(command -v sleep)" "$tmpdir/docktop"
-          "$tmpdir/docktop" 4 &
+          cat > "$tmpdir/main.go" <<'EOF'
+          package main
+
+          import (
+              "os"
+              "time"
+          )
+
+          func main() {
+              if err := os.WriteFile(os.Args[1], nil, 0600); err != nil {
+                  panic(err)
+              }
+              time.Sleep(6 * time.Second)
+          }
+          EOF
+          go build -o "$tmpdir/docktop" "$tmpdir/main.go"
+          "$tmpdir/docktop" "$tmpdir/ready" &
           pid=$!
+          for attempt in {1..50}; do
+            [[ -f "$tmpdir/ready" ]] && break
+            sleep 0.1
+          done
+          [[ -f "$tmpdir/ready" ]]
           bash scripts/benchmark-process.sh "$pid" 2 1
           wait "$pid"
